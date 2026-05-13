@@ -111,3 +111,33 @@
         -t Trinity_2019filtered_Reference.fasta \
         -i salmon_index/Bstol_index \
         -p 8
+## Quantifying tissue reads
+
+
+    mkdir -p quants
+    
+    for tissue in autozooid_bud autozooid_mature avicularium_bud avicularium_mature rhizoid_autozooid rhizoid_network
+        switch $tissue
+            case autozooid_bud; set short AutoBud
+            case autozooid_mature; set short AutoMat
+            case avicularium_bud; set short AvicBud
+            case avicularium_mature; set short AvicMat
+            case rhizoid_autozooid; set short RhizAuto
+            case rhizoid_network; set short RhizStol
+        end
+        
+        for rep in rep1 rep2 rep3
+            set r1 trimmed/$tissue\_$rep\_R1.fastq.gz
+            set r2 trimmed/$tissue\_$rep\_R2.fastq.gz
+            
+            echo "Quantifying $short $rep..."
+            salmon quant \
+                -i salmon_index/Bstol_index \
+                -l A \
+                -1 $r1 \
+                -2 $r2 \
+                --validateMappings \
+                -p 8 \
+                -o quants/$short\_$rep
+        end
+    end
