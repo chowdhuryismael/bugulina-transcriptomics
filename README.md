@@ -86,34 +86,19 @@
     multiqc fastqc_reports/ -o multiqc_report/
 
 ## Trimmed
-    mkdir -p trimmed
-    
-    # Process all tissues
+  mkdir -p trimmed
+
     for tissue in autozooid_bud autozooid_mature avicularium_bud avicularium_mature rhizoid_autozooid rhizoid_network
-        # Get the short name
-        switch $tissue
-            case autozooid_bud; set short AutoBud
-            case autozooid_mature; set short AutoMat
-            case avicularium_bud; set short AvicBud
-            case avicularium_mature; set short AvicMat
-            case rhizoid_autozooid; set short RhizAuto
-            case rhizoid_network; set short RhizStol
-        end
-        
         for rep in rep1 rep2 rep3
             set r1 $tissue/$tissue\_$rep\_R1.fastq.gz
             set r2 $tissue/$tissue\_$rep\_R2.fastq.gz
-            set out1 trimmed/$short\_$rep\_R1.fastq.gz
-            set out2 trimmed/$short\_$rep\_R2.fastq.gz
+            set out1 trimmed/$tissue\_$rep\_R1.fastq.gz
+            set out2 trimmed/$tissue\_$rep\_R2.fastq.gz
+            set html trimmed/$tissue\_$rep\_fastp.html
+            set json trimmed/$tissue\_$rep\_fastp.json
             
-            echo "Trimming $short $rep..."
-            fastp -i $r1 -I $r2 -o $out1 -O $out2 \
-                --detect_adapter_for_pe \
-                --qualified_qual_phred 20 \
-                --length_required 50 \
-                --thread 4 \
-                --html trimmed/$short\_$rep\_fastp.html \
-                --json trimmed/$short\_$rep\_fastp.json
+            echo "Trimming $tissue $rep..."
+            fastp -i $r1 -I $r2 -o $out1 -O $out2 --detect_adapter_for_pe -q 20 -l 50 -w 4 -h $html -j $json
         end
     end
 
