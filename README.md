@@ -623,3 +623,55 @@ pheatmap(heatmap_top,
 
 <img width="1078" height="1019" alt="image" src="https://github.com/user-attachments/assets/5cf2e07e-8272-4e6d-b5ec-de7e03d5e11f" />
 
+
+
+
+
+____________________________________________________________________________________________________
+####################################################################################################
+____________________________________________________________________________________________________
+
+## Annoatation
+
+## Transdecoder
+        TransDecoder.LongOrfs \                                                                                                                                                         
+                -t top_DEGs_seqs.fasta \
+                 -m 50 \
+                 -O transdecoder_results \
+                 -G Universal
+
+        TransDecoder.Predict \                                                                                                                                                       
+                            -t top_DEGs_seqs.fasta \
+                             --output_dir transdecoder_results \
+                             --single_best_only
+
+
+
+### Blast
+diamond blastx \
+    --db /projects/health_sciences/bms/biochemistry/kenny_group/katerinaachilleos/Databases/uniprot/reference_proteomes.dmnd \
+    --query top_DEGs_seqs.fasta \
+    --out diamond_results/top_DEGs_diamond.txt \
+    --outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle \
+    --threads 16 \
+    --max-target-seqs 5 \
+    --evalue 1e-5 \
+    --sensitive
+
+    
+for fasta in *.fasta
+    set name (basename $fasta .fasta)
+    echo "Diamond on $name..."
+    diamond blastx \
+        --db /projects/health_sciences/bms/biochemistry/kenny_group/katerinaachilleos/Databases/uniprot/reference_proteomes.dmnd \
+        --query $fasta \
+        --out diamond_results/$name\_diamond.txt \
+        --outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle \
+        --threads 8 \
+        --max-target-seqs 5 \
+        --evalue 1e-5 \
+        --sensitive &
+end
+wait
+echo "All Diamond runs complete!"
+
