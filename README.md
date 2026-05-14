@@ -290,3 +290,153 @@ ________________________________________________________________________________
 <img width="1078" height="1019" alt="image" src="https://github.com/user-attachments/assets/a49b3656-12ce-4a30-9594-1a3c2c886894" />
 
 
+
+
+
+
+# Top 500 most variable genes
+    topVarGenes <- head(order(rowVars(norm_counts), decreasing = TRUE), 500)
+    heatmap_data <- norm_counts[topVarGenes, ]
+
+# Create annotation for tissues
+    ann_col <- data.frame(tissue = samples$tissue)
+    rownames(ann_col) <- colnames(heatmap_data)
+
+# Color palette
+    tissue_colors <- c("AutoBud" = "#E41A1C", "AutoMat" = "#377EB8", 
+                       "AvicBud" = "#4DAF4A", "AvicMat" = "#984EA3",
+                       "RhizAuto" = "#FF7F00", "RhizStol" = "#A65628")
+    ann_colors <- list(tissue = tissue_colors)
+
+    pheatmap(heatmap_data, 
+             annotation_col = ann_col,
+             annotation_colors = ann_colors,
+             show_rownames = FALSE,
+             scale = "row",
+             clustering_distance_cols = "correlation",
+             main = "Top 500 Variable Genes Across Tissues")
+
+
+<img width="1078" height="1019" alt="image" src="https://github.com/user-attachments/assets/49a131cc-60f8-4910-bc57-37eff9f74b52" />
+
+
+# Define comparisons of interest
+    comparisons <- list(
+      c("AutoMat", "AutoBud"),   # Mature vs bud autozooid
+      c("AvicMat", "AvicBud"),   # Mature vs bud avicularium
+      c("AvicBud", "AutoBud"),   # Avicularium vs autozooid bud
+      c("AvicMat", "AutoMat"),   # Mature avicularium vs mature autozooid
+      c("RhizAuto", "RhizStol"), # Rhizoid autozooid vs network
+      c("RhizAuto", "AutoMat"),  # Rhizoid vs autozooid (mature)
+      c("RhizStol", "AutoBud")   # Stolon network vs autozooid bud
+    )
+
+# Run all comparisons
+        degs_list <- list()
+        for(comp in comparisons) {
+          name <- paste0(comp[1], "_vs_", comp[2])
+          cat("\n=== ", name, " ===\n")
+          res <- results(dds, contrast = c("tissue", comp[1], comp[2]), alpha = 0.05)
+          summary(res)
+          degs_list[[name]] <- res
+        }
+        
+        ===  AutoMat_vs_AutoBud  ===
+        
+        out of 62577 with nonzero total read count
+        adjusted p-value < 0.05
+        LFC > 0 (up)       : 376, 0.6%
+        LFC < 0 (down)     : 241, 0.39%
+        outliers [1]       : 2305, 3.7%
+        low counts [2]     : 13075, 21%
+        (mean count < 6)
+        [1] see 'cooksCutoff' argument of ?results
+        [2] see 'independentFiltering' argument of ?results
+        
+        
+        ===  AvicMat_vs_AvicBud  ===
+        
+        out of 62577 with nonzero total read count
+        adjusted p-value < 0.05
+        LFC > 0 (up)       : 1049, 1.7%
+        LFC < 0 (down)     : 375, 0.6%
+        outliers [1]       : 2305, 3.7%
+        low counts [2]     : 11914, 19%
+        (mean count < 6)
+        [1] see 'cooksCutoff' argument of ?results
+        [2] see 'independentFiltering' argument of ?results
+        
+        
+        ===  AvicBud_vs_AutoBud  ===
+        
+        out of 62577 with nonzero total read count
+        adjusted p-value < 0.05
+        LFC > 0 (up)       : 2235, 3.6%
+        LFC < 0 (down)     : 3246, 5.2%
+        outliers [1]       : 2305, 3.7%
+        low counts [2]     : 7183, 11%
+        (mean count < 5)
+        [1] see 'cooksCutoff' argument of ?results
+        [2] see 'independentFiltering' argument of ?results
+        
+        
+        ===  AvicMat_vs_AutoMat  ===
+        
+        out of 62577 with nonzero total read count
+        adjusted p-value < 0.05
+        LFC > 0 (up)       : 1863, 3%
+        LFC < 0 (down)     : 1583, 2.5%
+        outliers [1]       : 2305, 3.7%
+        low counts [2]     : 11914, 19%
+        (mean count < 6)
+        [1] see 'cooksCutoff' argument of ?results
+        [2] see 'independentFiltering' argument of ?results
+        
+        
+        ===  RhizAuto_vs_RhizStol  ===
+        
+        out of 62577 with nonzero total read count
+        adjusted p-value < 0.05
+        LFC > 0 (up)       : 997, 1.6%
+        LFC < 0 (down)     : 438, 0.7%
+        outliers [1]       : 2305, 3.7%
+        low counts [2]     : 21220, 34%
+        (mean count < 10)
+        [1] see 'cooksCutoff' argument of ?results
+        [2] see 'independentFiltering' argument of ?results
+        
+        
+        ===  RhizAuto_vs_AutoMat  ===
+        
+        out of 62577 with nonzero total read count
+        adjusted p-value < 0.05
+        LFC > 0 (up)       : 303, 0.48%
+        LFC < 0 (down)     : 296, 0.47%
+        outliers [1]       : 2305, 3.7%
+        low counts [2]     : 9556, 15%
+        (mean count < 5)
+        [1] see 'cooksCutoff' argument of ?results
+        [2] see 'independentFiltering' argument of ?results
+        
+        
+        ===  RhizStol_vs_AutoBud  ===
+        
+        out of 62577 with nonzero total read count
+        adjusted p-value < 0.05
+        LFC > 0 (up)       : 1972, 3.2%
+        LFC < 0 (down)     : 2080, 3.3%
+        outliers [1]       : 2305, 3.7%
+        low counts [2]     : 20071, 32%
+        (mean count < 9)
+        [1] see 'cooksCutoff' argument of ?results
+        [2] see 'independentFiltering' argument of ?results
+
+ Count DEGs per comparison
+ 
+        deg_counts <- sapply(degs_list, function(x) {
+          sum(x$padj < 0.05, na.rm = TRUE)
+        })
+        print(deg_counts)
+
+         AutoMat_vs_AutoBud   AvicMat_vs_AvicBud   AvicBud_vs_AutoBud   AvicMat_vs_AutoMat RhizAuto_vs_RhizStol  RhizAuto_vs_AutoMat  RhizStol_vs_AutoBud 
+                 617                 1424                 5481                 3446                 1435                  599                 4052 
