@@ -575,4 +575,51 @@ ________________________________________________________________________________
     TRINITY_DN133242_c0_g1_i2   23.1153       -20.0692  2.078958  -9.65348 4.75147e-22 1.73649e-18
     > 
 
-                 
+ 
+ # Install UpSetR if needed
+    install.packages("UpSetR")
+    library(UpSetR)
+
+# Create binary matrix of DEGs per comparison
+    all_degs <- unique(unlist(lapply(degs_list, function(res) {
+      rownames(res[which(res$padj < 0.05), ])
+    })))
+    
+    deg_matrix <- data.frame(row.names = all_degs)
+    for(name in names(degs_list)) {
+      res <- degs_list[[name]]
+      sig <- rownames(res[which(res$padj < 0.05), ])
+      deg_matrix[, name] <- as.integer(all_degs %in% sig)
+    }
+    
+    upset(deg_matrix, sets = names(deg_matrix), 
+          order.by = "freq", 
+          main.bar.color = "steelblue",
+          sets.bar.color = "firebrick")
+            
+<img width="1078" height="1019" alt="image" src="https://github.com/user-attachments/assets/cd16cfab-c2a9-4a69-b527-29ac54760785" />
+
+
+
+# Get top 20 DEGs from each comparison
+top_genes <- unique(unlist(lapply(degs_list, function(res) {
+  sig <- res[which(res$padj < 0.05), ]
+  sig <- sig[order(sig$padj), ]
+  rownames(sig)[1:20]
+})))
+
+cat("Plotting", length(top_genes), "genes\n")
+
+# Heatmap of these genes across all samples
+heatmap_top <- norm_counts[top_genes, ]
+pheatmap(heatmap_top, 
+         annotation_col = ann_col,
+         annotation_colors = ann_colors,
+         show_rownames = FALSE,
+         scale = "row",
+         clustering_distance_cols = "correlation",
+         main = "Top DEGs Across All Tissue Comparisons",
+         fontsize = 8)
+
+<img width="1078" height="1019" alt="image" src="https://github.com/user-attachments/assets/5cf2e07e-8272-4e6d-b5ec-de7e03d5e11f" />
+
