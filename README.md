@@ -623,211 +623,190 @@ ________________________________________________________________________________
 
 <img width="1078" height="1019" alt="image" src="https://github.com/user-attachments/assets/5cf2e07e-8272-4e6d-b5ec-de7e03d5e11f" />
 
-
-        # 1A: Load expression data and get tissue-level summaries
+# 1A: Load expression data and get tissue-level summaries
         
-        tissue_means <- data.frame(
-          AutoBud = rowMeans(norm_counts[, grep("AutoBud", colnames(norm_counts))]),
-          AutoMat = rowMeans(norm_counts[, grep("AutoMat", colnames(norm_counts))]),
-          AvicBud = rowMeans(norm_counts[, grep("AvicBud", colnames(norm_counts))]),
-          AvicMat = rowMeans(norm_counts[, grep("AvicMat", colnames(norm_counts))]),
-          RhizAuto = rowMeans(norm_counts[, grep("RhizAuto", colnames(norm_counts))]),
-          RhizStol = rowMeans(norm_counts[, grep("RhizStol", colnames(norm_counts))])
-        )
-        # How many total transcripts?
-        cat("Total transcripts with expression:", nrow(tissue_means), "\n")
+       Total transcripts with expression: 62577 
+> # Top 500 expressed in each tissue
+        > top500_per_tissue <- list()
+        > for(tissue in colnames(tissue_means)) {
+        +   top500_per_tissue[[tissue]] <- head(order(tissue_means[, tissue], decreasing = TRUE), 500)
+        + }
+        > # Top 500 most highly expressed overall (mean across tissues)
+        > tissue_means$overall_mean <- rowMeans(tissue_means[, 1:6])
+        > top500_overall <- head(order(tissue_means$overall_mean, decreasing = TRUE), 500)
+        > # Shared across all tissues
+        > shared_all <- rowSums(expressed) == 6
+        Error in h(simpleError(msg, call)) : 
+          error in evaluating the argument 'x' in selecting a method for function 'rowSums': object 'expressed' not found
         
-        # Top 500 expressed in each tissue
-        top500_per_tissue <- list()
-        for(tissue in colnames(tissue_means)) {
-          top500_per_tissue[[tissue]] <- head(order(tissue_means[, tissue], decreasing = TRUE), 500)
-        }
+        > # 1B: Find unique genes per tissue
+        > # Define "expressed" as mean normalized count > 10
+        > expressed <- tissue_means[, 1:6] > 10
+        > # Unique to each tissue (only in that tissue, not in others)
+        > unique_genes <- list()
+        > for(tissue in colnames(expressed)) {
+        +   only_this <- expressed[, tissue] & rowSums(expressed[, colnames(expressed) != tissue]) == 0
+        +   unique_genes[[tissue]] <- rownames(expressed)[only_this]
+        +   cat(tissue, ":", sum(only_this), "unique genes\n")
+        + }
+        AutoBud : 44 unique genes
+        AutoMat : 220 unique genes
+        AvicBud : 143 unique genes
+        AvicMat : 80 unique genes
+        RhizAuto : 16 unique genes
+        RhizStol : 266 unique genes
+        > # Shared across all tissues
+        > shared_all <- rowSums(expressed) == 6
+        > cat("Shared across all tissues:", sum(shared_all), "genes\n")
+        Shared across all tissues: 347 genes
+        > # Shared between specific pairs/comparisons
+        > # Autozooid vs Avicularium (bud stage)
+        > auto_bud_avic_bud_shared <- expressed[, "AutoBud"] & expressed[, "AvicBud"]
+        > cat("Shared: AutoBud & AvicBud:", sum(auto_bud_avic_bud_shared), "\n")
+        Shared: AutoBud & AvicBud: 522 
+        > 
+        > 
+        > # Pairwise shared genes
+        > cat("\n=== Pairwise shared genes ===\n")
         
-        # Top 500 most highly expressed overall (mean across tissues)
-        tissue_means$overall_mean <- rowMeans(tissue_means[, 1:6])
-        top500_overall <- head(order(tissue_means$overall_mean, decreasing = TRUE), 500)
+        === Pairwise shared genes ===
+        > tissues <- colnames(expressed)
+        > pairwise_shared <- matrix(0, 6, 6, dimnames = list(tissues, tissues))
+        > for(i in 1:6) {
+        +   for(j in 1:6) {
+        +     shared <- expressed[, i] & expressed[, j]
+        +     pairwise_shared[i, j] <- sum(shared)
+        +   }
+        + }
+        > print(pairwise_shared)
+                 AutoBud AutoMat AvicBud AvicMat RhizAuto RhizStol
+        AutoBud      831     636     522     573      647      470
+        AutoMat      636     994     470     540      651      469
+        AvicBud      522     470     940     681      529      552
+        AvicMat      573     540     681     904      581      520
+        RhizAuto     647     651     529     581      808      521
+        RhizStol     470     469     552     520      521      966
+        > # Jaccard similarity (shared / union)
+        > cat("\n=== Jaccard similarity (shared/union) ===\n")
         
+        === Jaccard similarity (shared/union) ===
+        > jaccard <- matrix(0, 6, 6, dimnames = list(tissues, tissues))
+        > for(i in 1:6) {
+        +   for(j in 1:6) {
+        +     union <- expressed[, i] | expressed[, j]
+        +     shared <- expressed[, i] & expressed[, j]
+        +     jaccard[i, j] <- round(sum(shared) / sum(union), 3)
+        +   }
+        + }
+        > print(jaccard)
+                 AutoBud AutoMat AvicBud AvicMat RhizAuto RhizStol
+        AutoBud    1.000   0.535   0.418   0.493    0.652    0.354
+        AutoMat    0.535   1.000   0.321   0.398    0.566    0.315
+        AvicBud    0.418   0.321   1.000   0.586    0.434    0.408
+        AvicMat    0.493   0.398   0.586   1.000    0.514    0.385
+        RhizAuto   0.652   0.566   0.434   0.514    1.000    0.416
+        RhizStol   0.354   0.315   0.408   0.385    0.416    1.000
+        > # Specific pairwise comparisons of interest
+        > cat("\n=== Key biological comparisons ===\n")
         
-        # 1B: Find unique genes per tissue
-        # Define "expressed" as mean normalized count > 10
-        expressed <- tissue_means[, 1:6] > 10
+        === Key biological comparisons ===
+        > # Buds: autozooid vs avicularium
+        > shared_buds <- expressed[, "AutoBud"] & expressed[, "AvicBud"]
+        > cat("Shared AutoBud & AvicBud:", sum(shared_buds), 
+        +     "(Jaccard:", round(sum(shared_buds)/sum(expressed[, "AutoBud"] | expressed[, "AvicBud"]), 3), ")\n")
+        Shared AutoBud & AvicBud: 522 (Jaccard: 0.418 )
+        > # Mature: autozooid vs avicularium
+        > shared_mature <- expressed[, "AutoMat"] & expressed[, "AvicMat"]
+        > cat("Shared AutoMat & AvicMat:", sum(shared_mature),
+        +     "(Jaccard:", round(sum(shared_mature)/sum(expressed[, "AutoMat"] | expressed[, "AvicMat"]), 3), ")\n")
+        Shared AutoMat & AvicMat: 540 (Jaccard: 0.398 )
+        > # Autozooid: bud vs mature
+        > shared_auto <- expressed[, "AutoBud"] & expressed[, "AutoMat"]
+        > cat("Shared AutoBud & AutoMat:", sum(shared_auto),
+        +     "(Jaccard:", round(sum(shared_auto)/sum(expressed[, "AutoBud"] | expressed[, "AutoMat"]), 3), ")\n")
+        Shared AutoBud & AutoMat: 636 (Jaccard: 0.535 )
+        > # Avicularium: bud vs mature
+        > shared_avic <- expressed[, "AvicBud"] & expressed[, "AvicMat"]
+        > cat("Shared AvicBud & AvicMat:", sum(shared_avic),
+        +     "(Jaccard:", round(sum(shared_avic)/sum(expressed[, "AvicBud"] | expressed[, "AvicMat"]), 3), ")\n")
+        Shared AvicBud & AvicMat: 681 (Jaccard: 0.586 )
+        > # Rhizoid: autozooid vs network
+        > shared_rhiz <- expressed[, "RhizAuto"] & expressed[, "RhizStol"]
+        > cat("Shared RhizAuto & RhizStol:", sum(shared_rhiz),
+        +     "(Jaccard:", round(sum(shared_rhiz)/sum(expressed[, "RhizAuto"] | expressed[, "RhizStol"]), 3), ")\n")
+        Shared RhizAuto & RhizStol: 521 (Jaccard: 0.416 )
+        > # AutoMat vs RhizAuto (both mature, both feeding-related?)
+        > shared_mat_rhiz <- expressed[, "AutoMat"] & expressed[, "RhizAuto"]
+        > cat("Shared AutoMat & RhizAuto:", sum(shared_mat_rhiz),
+        +     "(Jaccard:", round(sum(shared_mat_rhiz)/sum(expressed[, "AutoMat"] | expressed[, "RhizAuto"]), 3), ")\n")
+        Shared AutoMat & RhizAuto: 651 (Jaccard: 0.566 )
+        > # AvicMat vs RhizStol (structural/defensive?)
+        > shared_avic_rhiz <- expressed[, "AvicMat"] & expressed[, "RhizStol"]
+        > cat("Shared AvicMat & RhizStol:", sum(shared_avic_rhiz),
+        +     "(Jaccard:", round(sum(shared_avic_rhiz)/sum(expressed[, "AvicMat"] | expressed[, "RhizStol"]), 3), ")\n")
+        Shared AvicMat & RhizStol: 520 (Jaccard: 0.385 )
+        > # AutoBud vs RhizStol (budding/growing tissues)
+        > shared_growing <- expressed[, "AutoBud"] & expressed[, "RhizStol"]
+        > cat("Shared AutoBud & RhizStol:", sum(shared_growing),
+        +     "(Jaccard:", round(sum(shared_growing)/sum(expressed[, "AutoBud"] | expressed[, "RhizStol"]), 3), ")\n")
+        Shared AutoBud & RhizStol: 470 (Jaccard: 0.354 )
+        > # Venn diagram data for key trios
+        > cat("\n=== Triple overlaps ===\n")
         
-        # Unique to each tissue (only in that tissue, not in others)
-        unique_genes <- list()
-        for(tissue in colnames(expressed)) {
-          only_this <- expressed[, tissue] & rowSums(expressed[, colnames(expressed) != tissue]) == 0
-          unique_genes[[tissue]] <- rownames(expressed)[only_this]
-          cat(tissue, ":", sum(only_this), "unique genes\n")
-        }
+        === Triple overlaps ===
+        > # Buds + mature autozooids
+        > tri_auto <- expressed[, "AutoBud"] & expressed[, "AutoMat"] & expressed[, "AvicBud"]
+        > cat("Shared AutoBud + AutoMat + AvicBud:", sum(tri_auto), "\n")
+        Shared AutoBud + AutoMat + AvicBud: 428 
+        > # Mature tissues
+        > tri_mature <- expressed[, "AutoMat"] & expressed[, "AvicMat"] & expressed[, "RhizAuto"]
+        > cat("Shared AutoMat + AvicMat + RhizAuto:", sum(tri_mature), "\n")
+        Shared AutoMat + AvicMat + RhizAuto: 498 
+        > # Rhizoid types + autozooid mature
+        > tri_rhiz <- expressed[, "RhizAuto"] & expressed[, "RhizStol"] & expressed[, "AutoMat"]
+        > cat("Shared RhizAuto + RhizStol + AutoMat:", sum(tri_rhiz), "\n")
+        Shared RhizAuto + RhizStol + AutoMat: 427 
+        > # Save all results
+        > save(expressed, unique_genes, shared_all, pairwise_shared, jaccard,
+        +      file = "tissue_overlap_analysis.RData")
+        > # Number of genes per tissue
+        > cat("\n=== Genes expressed per tissue (>10 normalized counts) ===\n")
         
-        # Shared across all tissues
-        shared_all <- rowSums(expressed) == 6
-        cat("Shared across all tissues:", sum(shared_all), "genes\n")
+        === Genes expressed per tissue (>10 normalized counts) ===
+        > for(tissue in colnames(expressed)) {
+        +   cat(tissue, ":", sum(expressed[, tissue]), "\n")
+        + }
+        AutoBud : 831 
+        AutoMat : 994 
+        AvicBud : 940 
+        AvicMat : 904 
+        RhizAuto : 808 
+        RhizStol : 966 
+        > cat("\n=== Unique genes per tissue ===\n")
         
-        # Shared between specific pairs/comparisons
-        # Autozooid vs Avicularium (bud stage)
-        auto_bud_avic_bud_shared <- expressed[, "AutoBud"] & expressed[, "AvicBud"]
-        cat("Shared: AutoBud & AvicBud:", sum(auto_bud_avic_bud_shared), "\n")
+        === Unique genes per tissue ===
+        > for(tissue in names(unique_genes)) {
+        +   cat(tissue, ":", length(unique_genes[[tissue]]), "\n")
+        + }
+        AutoBud : 44 
+        AutoMat : 220 
+        AvicBud : 143 
+        AvicMat : 80 
+        RhizAuto : 16 
+        RhizStol : 266 
+        > cat("\n=== Shared across all 6 tissues:", sum(shared_all), "===\n")
         
-        # Pairwise shared genes
-        cat("\n=== Pairwise shared genes ===\n")
-        tissues <- colnames(expressed)
-        pairwise_shared <- matrix(0, 6, 6, dimnames = list(tissues, tissues))
-        
-        for(i in 1:6) {
-          for(j in 1:6) {
-            shared <- expressed[, i] & expressed[, j]
-            pairwise_shared[i, j] <- sum(shared)
-          }
-        }
-        print(pairwise_shared)
-        
-        # Jaccard similarity (shared / union)
-        cat("\n=== Jaccard similarity (shared/union) ===\n")
-        jaccard <- matrix(0, 6, 6, dimnames = list(tissues, tissues))
-        for(i in 1:6) {
-          for(j in 1:6) {
-            union <- expressed[, i] | expressed[, j]
-            shared <- expressed[, i] & expressed[, j]
-            jaccard[i, j] <- round(sum(shared) / sum(union), 3)
-          }
-        }
-        print(jaccard)
-        
-        # Specific pairwise comparisons of interest
-        cat("\n=== Key biological comparisons ===\n")
-        
-        # Buds: autozooid vs avicularium
-        shared_buds <- expressed[, "AutoBud"] & expressed[, "AvicBud"]
-        cat("Shared AutoBud & AvicBud:", sum(shared_buds), 
-            "(Jaccard:", round(sum(shared_buds)/sum(expressed[, "AutoBud"] | expressed[, "AvicBud"]), 3), ")\n")
-        
-        # Mature: autozooid vs avicularium
-        shared_mature <- expressed[, "AutoMat"] & expressed[, "AvicMat"]
-        cat("Shared AutoMat & AvicMat:", sum(shared_mature),
-            "(Jaccard:", round(sum(shared_mature)/sum(expressed[, "AutoMat"] | expressed[, "AvicMat"]), 3), ")\n")
-        
-        # Autozooid: bud vs mature
-        shared_auto <- expressed[, "AutoBud"] & expressed[, "AutoMat"]
-        cat("Shared AutoBud & AutoMat:", sum(shared_auto),
-            "(Jaccard:", round(sum(shared_auto)/sum(expressed[, "AutoBud"] | expressed[, "AutoMat"]), 3), ")\n")
-        
-        # Avicularium: bud vs mature
-        shared_avic <- expressed[, "AvicBud"] & expressed[, "AvicMat"]
-        cat("Shared AvicBud & AvicMat:", sum(shared_avic),
-            "(Jaccard:", round(sum(shared_avic)/sum(expressed[, "AvicBud"] | expressed[, "AvicMat"]), 3), ")\n")
-        
-        # Rhizoid: autozooid vs network
-        shared_rhiz <- expressed[, "RhizAuto"] & expressed[, "RhizStol"]
-        cat("Shared RhizAuto & RhizStol:", sum(shared_rhiz),
-            "(Jaccard:", round(sum(shared_rhiz)/sum(expressed[, "RhizAuto"] | expressed[, "RhizStol"]), 3), ")\n")
-        
-        # AutoMat vs RhizAuto (both mature, both feeding-related?)
-        shared_mat_rhiz <- expressed[, "AutoMat"] & expressed[, "RhizAuto"]
-        cat("Shared AutoMat & RhizAuto:", sum(shared_mat_rhiz),
-            "(Jaccard:", round(sum(shared_mat_rhiz)/sum(expressed[, "AutoMat"] | expressed[, "RhizAuto"]), 3), ")\n")
-        
-        # AvicMat vs RhizStol (structural/defensive?)
-        shared_avic_rhiz <- expressed[, "AvicMat"] & expressed[, "RhizStol"]
-        cat("Shared AvicMat & RhizStol:", sum(shared_avic_rhiz),
-            "(Jaccard:", round(sum(shared_avic_rhiz)/sum(expressed[, "AvicMat"] | expressed[, "RhizStol"]), 3), ")\n")
-        
-        # AutoBud vs RhizStol (budding/growing tissues)
-        shared_growing <- expressed[, "AutoBud"] & expressed[, "RhizStol"]
-        cat("Shared AutoBud & RhizStol:", sum(shared_growing),
-            "(Jaccard:", round(sum(shared_growing)/sum(expressed[, "AutoBud"] | expressed[, "RhizStol"]), 3), ")\n")
-        
-        # Venn diagram data for key trios
-        cat("\n=== Triple overlaps ===\n")
-        
-        # Buds + mature autozooids
-        tri_auto <- expressed[, "AutoBud"] & expressed[, "AutoMat"] & expressed[, "AvicBud"]
-        cat("Shared AutoBud + AutoMat + AvicBud:", sum(tri_auto), "\n")
-        
-        # Mature tissues
-        tri_mature <- expressed[, "AutoMat"] & expressed[, "AvicMat"] & expressed[, "RhizAuto"]
-        cat("Shared AutoMat + AvicMat + RhizAuto:", sum(tri_mature), "\n")
-        
-        # Rhizoid types + autozooid mature
-        tri_rhiz <- expressed[, "RhizAuto"] & expressed[, "RhizStol"] & expressed[, "AutoMat"]
-        cat("Shared RhizAuto + RhizStol + AutoMat:", sum(tri_rhiz), "\n")
-        
-        # Save all results
-        save(expressed, unique_genes, shared_all, pairwise_shared, jaccard,
-             file = "tissue_overlap_analysis.RData")
-        
-        
-        
-        
-        # Number of genes per tissue
-        cat("\n=== Genes expressed per tissue (>10 normalized counts) ===\n")
-        for(tissue in colnames(expressed)) {
-          cat(tissue, ":", sum(expressed[, tissue]), "\n")
-        }
-        
-        cat("\n=== Unique genes per tissue ===\n")
-        for(tissue in names(unique_genes)) {
-          cat(tissue, ":", length(unique_genes[[tissue]]), "\n")
-        }
-        
-        cat("\n=== Shared across all 6 tissues:", sum(shared_all), "===\n")
-        
-        # Overlap matrix
-        overlap_matrix <- crossprod(expressed[, 1:6] * 1)
-        print(overlap_matrix)
-        
-        # Save gene lists for annotation on HPC
-        write.table(rownames(expressed)[shared_all], 
-                    "shared_all_tissues.txt", 
-                    quote = FALSE, row.names = FALSE, col.names = FALSE)
-        
-        for(tissue in names(unique_genes)) {
-          write.table(unique_genes[[tissue]], 
-                      paste0("unique_", tissue, ".txt"),
-                      quote = FALSE, row.names = FALSE, col.names = FALSE)
-        }
-        
-        # Also save top 500 per tissue
-        for(tissue in colnames(tissue_means)) {
-          genes <- rownames(tissue_means)[top500_per_tissue[[tissue]]]
-          write.table(genes, paste0("top500_", tissue, ".txt"),
-                      quote = FALSE, row.names = FALSE, col.names = FALSE)
-        }
-                    === Genes expressed per tissue (>10 normalized counts) ===
-                    > for(tissue in colnames(expressed)) {
-                    +   cat(tissue, ":", sum(expressed[, tissue]), "\n")
-                    + }
-                    AutoBud : 831 
-                    AutoMat : 994 
-                    AvicBud : 940 
-                    AvicMat : 904 
-                    RhizAuto : 808 
-                    RhizStol : 966 
-                    > cat("\n=== Unique genes per tissue ===\n")
-            
-            === Unique genes per tissue ===
-            > for(tissue in names(unique_genes)) {
-            +   cat(tissue, ":", length(unique_genes[[tissue]]), "\n")
-            + }
-            AutoBud : 44 
-            AutoMat : 220 
-            AvicBud : 143 
-            AvicMat : 80 
-            RhizAuto : 16 
-            RhizStol : 266 
-            > cat("\n=== Shared across all 6 tissues:", sum(shared_all), "===\n")
-            
-            === Shared across all 6 tissues: 347 ===
-            > # Overlap matrix
-            > overlap_matrix <- crossprod(expressed[, 1:6] * 1)
-            > print(overlap_matrix)
-                     AutoBud AutoMat AvicBud AvicMat RhizAuto RhizStol
-            AutoBud      831     636     522     573      647      470
-            AutoMat      636     994     470     540      651      469
-            AvicBud      522     470     940     681      529      552
-            AvicMat      573     540     681     904      581      520
-            RhizAuto     647     651     529     581      808      521
-            RhizStol     470     469     552     520      521      966
+        === Shared across all 6 tissues: 347 ===
+        > # Overlap matrix
+        > overlap_matrix <- crossprod(expressed[, 1:6] * 1)
+        > print(overlap_matrix)
+                 AutoBud AutoMat AvicBud AvicMat RhizAuto RhizStol
+        AutoBud      831     636     522     573      647      470
+        AutoMat      636     994     470     540      651      469
+        AvicBud      522     470     940     681      529      552
+        AvicMat      573     540     681     904      581      520
+        RhizAuto     647     651     529     581      808      521
+        RhizStol     470     469     552     520      521      966
 
 ____________________________________________________________________________________________________
 ####################################################################################################
