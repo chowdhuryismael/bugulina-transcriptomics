@@ -827,32 +827,897 @@ ________________________________________________________________________________
                              --single_best_only
 
 
-
-### Blast
-diamond blastx \
-    --db /projects/health_sciences/bms/biochemistry/kenny_group/katerinaachilleos/Databases/uniprot/reference_proteomes.dmnd \
-    --query top_DEGs_seqs.fasta \
-    --out diamond_results/top_DEGs_diamond.txt \
-    --outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle \
-    --threads 16 \
-    --max-target-seqs 5 \
-    --evalue 1e-5 \
-    --sensitive
-
-    
-for fasta in *.fasta
-    set name (basename $fasta .fasta)
-    echo "Diamond on $name..."
+# ══════════════════════════════════════════════════
+# blast
+# ══════════════════════════════════════════════════
     diamond blastx \
         --db /projects/health_sciences/bms/biochemistry/kenny_group/katerinaachilleos/Databases/uniprot/reference_proteomes.dmnd \
-        --query $fasta \
-        --out diamond_results/$name\_diamond.txt \
+        --query top_DEGs_seqs.fasta \
+        --out diamond_results/top_DEGs_diamond.txt \
         --outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle \
-        --threads 8 \
+        --threads 16 \
         --max-target-seqs 5 \
         --evalue 1e-5 \
-        --sensitive &
-end
-wait
-echo "All Diamond runs complete!"
+        --sensitive
+        
+    diamond blastx \                                                                                                                                                                             (blast_env) 
+                                                                 --db $DIAMOND_DB \
+                                                                 --query $FASTA \
+                                                                 --out diamond_full_nt.txt \
+                                                                 --outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle \
+                                                                 --threads 32 \
+                                                                 --max-target-seqs 1 \
+                                                                 --evalue 1e-5 \
+                                                                 --sensitive
+    
+        
+    for fasta in *.fasta
+        set name (basename $fasta .fasta)
+        echo "Diamond on $name..."
+        diamond blastx \
+            --db /projects/health_sciences/bms/biochemistry/kenny_group/katerinaachilleos/Databases/uniprot/reference_proteomes.dmnd \
+            --query $fasta \
+            --out diamond_results/$name\_diamond.txt \
+            --outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle \
+            --threads 8 \
+            --max-target-seqs 5 \
+            --evalue 1e-5 \
+            --sensitive &
+    end
+    wait
+    echo "All Diamond runs complete!"
 
+
+
+
+
+    diamond blastp \                                                                                                                                                                          
+                                                                 --db $DIAMOND_DB \
+                                                                 --query Trinity_2019filtered_Reference.fasta.transdecoder.pep \
+                                                                 --out diamond_full_prot.txt \
+                                                                 --outfmt 6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore stitle \
+                                                                 --threads 32 \
+                                                                 --max-target-seqs 1 \
+                                                                 --evalue 1e-5 \
+                                                                 --sensitive
+# ══════════════════════════════════════════════════
+# interproscan
+# ══════════════════════════════════════════════════
+    
+     set -x JAVA_TOOL_OPTIONS "-Xmx128G -Xms16G"                                                                                                                                         
+                                                           interproscan.sh \
+                                                                   -i Trinity_2019filtered_Reference.\
+                                                           noSTOP.pep    -f tsv \
+                                                                   -o interproscan_full.tsv \
+                                                                   -cpu 32 \
+                                                                   -goterms \
+                                                                   -dp \
+                                                                   -hm
+# ══════════════════════════════════════════════════
+# TransDecoder
+# ══════════════════════════════════════════════════
+    
+    TransDecoder.LongOrfs \                                                                                                                                                                  
+                                                                   -t top_DEGs_seqs.fasta \
+                                                                   -m 50 \
+                                                                   -O transdecoder_results \
+                                                                   -G Universal
+    
+    
+     TransDecoder.Predict \                                                                                                                                                                    
+                                                                   -t top_DEGs_seqs.fasta \
+                                                                   --output_dir transdecoder_results \
+                                                                   --single_best_only
+
+
+                                                               
+
+# ══════════════════════════════════════════════════
+# eggnog
+# ══════════════════════════════════════════════════
+    emapper.py \                                                                                                                                                                              
+                                                                   -i Trinity_2019filtered_Reference.fasta.transdecoder.pep \
+                                                                   --output full_transcriptome_eggnog \
+                                                                   --cpu 32 \
+                                                                   --itype proteins \
+                                                                   --tax_scope Metazoa \
+                                                                   --data_dir $EGGNOG_DB
+
+#####################################################
+
+
+
+
+################################
+################################
+    install.packages("clusterProfiler")
+    install.packages("enrichplot")
+    BiocManager::install("clusterProfiler")
+    BiocManager::install("enrichplot")
+
+a# ============================================
+# ANNOTATION INTEGRATION & GO ENRICHMENT
+# Run this after downloading HPC annotation files
+# ============================================
+
+    library(DESeq2)
+    library(tximport)
+    library(clusterProfiler)
+    library(enrichplot)
+    library(ggplot2)
+    library(dplyr)
+    library(tidyr)
+    library(pheatmap)
+
+# ============================================
+# 1. LOAD ANNOTATIONS FROM HPC
+# ============================================
+
+# Check what files you actually have
+    dir()
+    list.files(pattern = "diamond")
+    list.files(pattern = "eggnog")
+    list.files(pattern = "interpro")
+    list.files(pattern = "tabular")
+
+# Check your working directory
+    getwd()
+    
+    load("bugulina_expression.RData")
+    load("tissue_specificity_analysis.RData")
+
+# Diamond nucleotide results
+    diamond_nt <- read.table("diamond_full_nt.txt", sep = "\t", stringsAsFactors = FALSE, quote = "")
+    colnames(diamond_nt) <- c("transcript", "uniprot_id", "pident", "length", 
+                              "mismatch", "gapopen", "qstart", "qend", 
+                              "sstart", "send", "evalue", "bitscore", "description")
+
+# Diamond protein results
+    diamond_prot <- read.table("diamond_full_prot.txt", sep = "\t", stringsAsFactors = FALSE, quote = "")
+    colnames(diamond_prot) <- c("transcript", "uniprot_id", "pident", "length",
+                                "mismatch", "gapopen", "qstart", "qend",
+                                "sstart", "send", "evalue", "bitscore", "description")
+
+# eggNOG annotations
+    eggnog <- read.table("full_transcriptome_eggnog.emapper.annotations",
+                         sep = "\t", header = TRUE, stringsAsFactors = FALSE, 
+                         quote = "", comment.char = "", na.strings = "-",
+                         fill = TRUE, skip = 4)
+# The header has # in front of first column name, fix it
+    colnames(eggnog)[1] <- "query"
+    colnames(eggnog)[colnames(eggnog) == "GOs"] <- "GO_terms"
+    colnames(eggnog)[colnames(eggnog) == "Preferred_name"] <- "Preferred_name"
+    
+    cat("eggNOG rows:", nrow(eggnog), "\n")
+    cat("eggNOG columns:\n")
+    print(colnames(eggnog))
+
+# Check key columns
+    head(eggnog[, c("query", "Description", "Preferred_name", "GO_terms")], 5)
+
+# InterProScan - 15 columns, tab-separated
+    col_names_ipr <- c("protein", "md5", "length", "analysis", "signature",
+                       "signature_desc", "start", "stop", "score", "status",
+                       "date", "interpro_id", "interpro_desc", "go_terms", "pathways")
+    
+    interpro <- read.table("interproscan.tabular", sep = "\t", stringsAsFactors = FALSE,
+                           quote = "", comment.char = "", fill = TRUE,
+                           col.names = col_names_ipr)
+    
+    cat("\nInterProScan rows:", nrow(interpro), "\n")
+    cat("InterProScan columns:", ncol(interpro), "\n")
+    head(interpro[, c("protein", "analysis", "signature_desc", "go_terms")], 5)
+
+# Strip the .p suffix from eggNOG and InterPro IDs to match
+    eggnog$transcript_base <- gsub("\\.p\\d+$", "", eggnog$query)
+    interpro$transcript_base <- gsub("\\.p\\d+$", "", interpro$protein)
+
+# ============================================
+# 2. BUILD MASTER ANNOTATION TABLE
+# ============================================
+
+# Best hit per transcript from Diamond nucleotide
+    best_hits_nt <- diamond_nt %>%
+      group_by(transcript) %>%
+      slice_min(evalue, n = 1) %>%
+      ungroup()
+
+# Best hit per transcript from Diamond protein
+    best_hits_prot <- diamond_prot %>%
+      group_by(transcript) %>%
+      slice_min(evalue, n = 1) %>%
+      ungroup()
+
+# Combine with eggNOG
+    annotations <- data.frame(
+      transcript = rownames(norm_counts),
+      row.names = rownames(norm_counts)
+    )
+
+# Add Diamond nt hits
+    annotations$uniprot_id <- best_hits_nt$uniprot_id[match(annotations$transcript, best_hits_nt$transcript)]
+    annotations$description <- best_hits_nt$description[match(annotations$transcript, best_hits_nt$transcript)]
+    annotations$evalue_nt <- best_hits_nt$evalue[match(annotations$transcript, best_hits_nt$transcript)]
+
+# Add eggNOG GO terms
+    eggnog_short <- eggnog[, c("query", "GO_terms", "KEGG_ko", "KEGG_Pathway", "COG_category", "Description")]
+    annotations$GO_terms <- eggnog_short$GO_terms[match(annotations$transcript, eggnog_short$query)]
+    annotations$KEGG_ko <- eggnog_short$KEGG_ko[match(annotations$transcript, eggnog_short$query)]
+    annotations$KEGG_pathway <- eggnog_short$KEGG_Pathway[match(annotations$transcript, eggnog_short$query)]
+    annotations$COG_category <- eggnog_short$COG_category[match(annotations$transcript, eggnog_short$query)]
+    annotations$eggNOG_desc <- eggnog_short$Description[match(annotations$transcript, eggnog_short$query)]
+
+# Save master annotation
+    save(annotations, best_hits_nt, best_hits_prot, eggnog, interpro,
+         file = "master_annotation.RData")
+
+# ============================================
+# 3. ANNOTATE KEY GENE SETS
+# ============================================
+
+# Load gene lists
+    avic_core <- read.table("avicularium_core_genes.txt", stringsAsFactors = FALSE)[,1]
+    rhiz_up <- read.table("rhizostol_up_genes.txt", stringsAsFactors = FALSE)[,1]
+    shared_all <- read.table("shared_all_6_tissues.txt", stringsAsFactors = FALSE)[,1]
+
+# Function to annotate a gene list
+    annotate_genes <- function(gene_list) {
+      data.frame(
+        transcript = gene_list,
+        description = annotations[gene_list, "description"],
+        GO_terms = annotations[gene_list, "GO_terms"],
+        KEGG_pathway = annotations[gene_list, "KEGG_pathway"],
+        stringsAsFactors = FALSE
+      )
+    }
+    
+    avic_core_annotated <- annotate_genes(avic_core)
+    rhiz_up_annotated <- annotate_genes(rhiz_up)
+    shared_all_annotated <- annotate_genes(shared_all)
+
+# Write annotated gene lists
+    write.csv(avic_core_annotated, "avicularium_core_annotated.csv", row.names = FALSE)
+    write.csv(rhiz_up_annotated, "rhizostol_up_annotated.csv", row.names = FALSE)
+    write.csv(shared_all_annotated, "shared_all_annotated.csv", row.names = FALSE)
+
+# ============================================
+# 4. GO ENRICHMENT ANALYSIS
+# ============================================
+
+    # Prepare GO term mapping from eggNOG
+    go_list <- strsplit(eggnog$GO_terms, ",")
+    names(go_list) <- eggnog$query
+    go_list <- go_list[!is.na(go_list)]
+    
+    # Unlist to create gene-to-GO mapping
+    go_mapping <- data.frame(
+      transcript = rep(names(go_list), sapply(go_list, length)),
+      GO = unlist(go_list),
+      stringsAsFactors = FALSE
+    )
+    go_mapping <- go_mapping[go_mapping$GO != "-" & !is.na(go_mapping$GO), ]
+
+# GO enrichment function
+    run_go_enrichment <- function(gene_set, name, universe = rownames(norm_counts)) {
+      cat("\n=== GO Enrichment:", name, "===\n")
+      
+      ego <- enricher(
+        gene = gene_set,
+        universe = universe,
+        TERM2GENE = go_mapping[, c("GO", "transcript")],
+        pvalueCutoff = 0.05,
+        qvalueCutoff = 0.1
+      )
+      
+      if(!is.null(ego) && nrow(ego) > 0) {
+        # Save results
+        write.csv(as.data.frame(ego), paste0("GO_enrichment_", name, ".csv"))
+    
+# Dot plot
+    if(nrow(ego) <= 30) {
+      p <- dotplot(ego, showCategory = 20) + 
+        ggtitle(paste("GO Enrichment:", name))
+      ggsave(paste0("GO_dotplot_", name, ".png"), p, width = 10, height = 8)
+    }
+    
+    cat("  Found", nrow(ego), "enriched GO terms\n")
+    print(head(ego, 10))
+    
+    return(ego)
+      } else {
+        cat("  No significant enrichment found\n")
+        return(NULL)
+      }
+    }
+    
+    # Run GO enrichment on key gene sets
+    go_avic_core <- run_go_enrichment(avic_core, "Avicularium_core")
+    go_rhiz_up <- run_go_enrichment(rhiz_up, "Rhizostol_up")
+    go_shared <- run_go_enrichment(shared_all, "Shared_all_tissues")
+    
+    # GO enrichment on unique genes per tissue
+    for(tissue in names(unique_genes)) {
+      if(length(unique_genes[[tissue]]) > 10) {
+        run_go_enrichment(unique_genes[[tissue]], paste0("Unique_", tissue))
+      }
+    }
+
+# ============================================
+# 5. COMPARE GO TERMS BETWEEN TISSUES
+# ============================================
+
+    # What GO terms are enriched in avicularium vs autozooid?
+    cat("\n=== Comparing Avicularium vs Autozooid GO terms ===\n")
+    if(!is.null(go_avic_core)) {
+      cat("Top avicularium GO terms:\n")
+      print(head(go_avic_core$Description, 10))
+    }
+    
+    if(!is.null(go_rhiz_up)) {
+      cat("\nTop rhizoid GO terms:\n")
+      print(head(go_rhiz_up$Description, 10))
+    }
+
+# ============================================
+# 6. IDENTIFY TRANSCRIPTION FACTORS & KEY GENES
+# ============================================
+
+    # From InterProScan, extract TF domains
+    tf_domains <- c("Homeobox", "Zinc finger", "bHLH", "Forkhead", "HMG box",
+                    "Nuclear hormone receptor", "Paired box", "T-box", "ETS")
+    
+    tf_genes <- interpro$protein[grep(paste(tf_domains, collapse = "|"), 
+                                      interpro$signature_desc, ignore.case = TRUE)]
+    tf_genes <- unique(tf_genes)
+    cat("\n=== Transcription factors found:", length(tf_genes), "===\n")
+    
+    # TFs in avicularium core
+    tf_avic <- intersect(tf_genes, avic_core)
+    cat("TFs in avicularium core:", length(tf_avic), "\n")
+    if(length(tf_avic) > 0) {
+      tf_avic_annotated <- annotate_genes(tf_avic)
+      write.csv(tf_avic_annotated, "TFs_avicularium_core.csv", row.names = FALSE)
+    }
+    
+    # TFs in rhizostol
+    tf_rhiz <- intersect(tf_genes, rhiz_up)
+    cat("TFs in rhizostol up:", length(tf_rhiz), "\n")
+    if(length(tf_rhiz) > 0) {
+      tf_rhiz_annotated <- annotate_genes(tf_rhiz)
+      write.csv(tf_rhiz_annotated, "TFs_rhizostol_up.csv", row.names = FALSE)
+    }
+
+# ============================================
+# 7. ANNOTATE TOP DEGs FOR FIGURES
+# ============================================
+
+    # Annotate top 50 DEGs from each comparison
+    for(name in names(degs_list)) {
+      res <- degs_list[[name]]
+      sig <- res[which(res$padj < 0.05), ]
+      sig <- sig[order(sig$padj), ]
+      top50 <- head(rownames(sig), 50)
+      
+      top50_df <- data.frame(
+        transcript = top50,
+        log2FC = sig[top50, "log2FoldChange"],
+        padj = sig[top50, "padj"],
+        description = annotations[top50, "description"],
+        eggNOG_desc = annotations[top50, "eggNOG_desc"],
+        stringsAsFactors = FALSE
+      )
+      
+      write.csv(top50_df, paste0("Top50_DEGs_", name, "_annotated.csv"), row.names = FALSE)
+    }
+
+# ============================================
+# 8. SAVE EVERYTHING
+# ============================================
+
+    save(annotations, go_avic_core, go_rhiz_up, go_shared,
+         avic_core_annotated, rhiz_up_annotated, shared_all_annotated,
+         tf_genes, tf_avic, tf_rhiz,
+         file = "full_analysis_with_annotations.RData")
+    
+    cat("\n==================================\n")
+    cat("Analysis complete!\n")
+    cat("Ready to generate publication figures\n")
+    cat("==================================\n")
+    
+    # ============================================
+    # THE KEY OUTPUT: What are the annotated genes?
+    # ============================================
+    
+    cat("\n=========================================\n")
+    cat("AVICULARIUM CORE GENES (930 total)\n")
+    cat("=========================================\n")
+    
+    # Show genes with real names (not just "uncharacterized")
+    avic_with_names <- avic_core_annotated[!is.na(avic_core_annotated$description) & 
+                                             avic_core_annotated$description != "-", ]
+    cat("Genes with annotations:", nrow(avic_with_names), "/", nrow(avic_core_annotated), "\n\n")
+
+# Top descriptions
+    cat("=== Top descriptions in Avicularium Core ===\n")
+    avic_desc_table <- sort(table(avic_with_names$description), decreasing = TRUE)
+    print(head(avic_desc_table, 40))
+    
+    cat("\n=========================================\n")
+    cat("RHIZOSTOL UPREGULATED GENES (1,972 total)\n")
+    cat("=========================================\n")
+    
+    rhiz_with_names <- rhiz_up_annotated[!is.na(rhiz_up_annotated$description) & 
+                                           rhiz_up_annotated$description != "-", ]
+    cat("Genes with annotations:", nrow(rhiz_with_names), "/", nrow(rhiz_up_annotated), "\n\n")
+    
+    cat("=== Top descriptions in Rhizostol Up ===\n")
+    rhiz_desc_table <- sort(table(rhiz_with_names$description), decreasing = TRUE)
+    print(head(rhiz_desc_table, 40))
+    
+    cat("\n=========================================\n")
+    cat("SHARED ALL TISSUES (347 genes)\n")
+    cat("=========================================\n")
+    
+    shared_with_names <- shared_all_annotated[!is.na(shared_all_annotated$description) & 
+                                                shared_all_annotated$description != "-", ]
+    cat("Genes with annotations:", nrow(shared_with_names), "/", nrow(shared_all_annotated), "\n\n")
+    
+    cat("=== Top descriptions in Shared All ===\n")
+    shared_desc_table <- sort(table(shared_with_names$description), decreasing = TRUE)
+    print(head(shared_desc_table, 40))
+
+# ============================================
+# SEARCH FOR KEY TERMS IN AVICULARIUM
+# ============================================
+    
+    cat("\n=========================================\n")
+    cat("KEYWORD SEARCH IN AVICULARIUM CORE\n")
+    cat("=========================================\n")
+
+    keywords <- c("muscle", "actin", "myosin", "contraction", "movement",
+                  "neur", "synap", "signal", "receptor", "channel",
+                  "cuticle", "chitin", "collagen", "structural", "skeleton",
+                  "defense", "toxin", "venom", "immun",
+                  "develop", "differentiation", "morphogen",
+                  "regeneration", "stem cell", "proliferation")
+    
+    for(kw in keywords) {
+      hits <- grep(kw, avic_with_names$description, ignore.case = TRUE, value = TRUE)
+      if(length(hits) > 0) {
+        cat("\n--- '", kw, "' (", length(hits), " genes) ---\n", sep = "")
+        print(head(unique(hits), 5))
+      }
+    }
+
+# ============================================
+# SEARCH FOR KEY TERMS IN RHIZOSTOL
+# ============================================
+    
+    cat("\n=========================================\n")
+    cat("KEYWORD SEARCH IN RHIZOSTOL UP\n")
+    cat("=========================================\n")
+    
+    for(kw in keywords) {
+      hits <- grep(kw, rhiz_with_names$description, ignore.case = TRUE, value = TRUE)
+      if(length(hits) > 0) {
+        cat("\n--- '", kw, "' (", length(hits), " genes) ---\n", sep = "")
+        print(head(unique(hits), 5))
+      }
+    }
+#################################################3
+
+
+# Extract only Bugula neritina hits (most reliable)
+    cat("\n=== BUGULA NERITINA HITS IN AVICULARIUM CORE ===\n")
+    avic_bugula <- avic_with_names[grep("BUGNE", avic_with_names$description), ]
+    avic_bugula$gene_name <- gsub(".*GN=(\\S+)\\s.*", "\\1", avic_bugula$description)
+    avic_bugula$gene_name <- gsub(".*_(\\S+)\\sOS=.*", "\\1", avic_bugula$description)
+
+# Get unique gene names
+    avic_bugula_genes <- unique(avic_bugula$gene_name)
+    cat("Unique Bugula neritina genes in avicularium core:", length(avic_bugula_genes), "\n")
+    print(sort(avic_bugula_genes))
+    
+    cat("\n=== BUGULA NERITINA HITS IN RHIZOSTOL UP ===\n")
+    rhiz_bugula <- rhiz_with_names[grep("BUGNE", rhiz_with_names$description), ]
+    rhiz_bugula$gene_name <- gsub(".*GN=(\\S+)\\s.*", "\\1", rhiz_bugula$description)
+    rhiz_bugula$gene_name <- gsub(".*_(\\S+)\\sOS=.*", "\\1", rhiz_bugula$description)
+    
+    rhiz_bugula_genes <- unique(rhiz_bugula$gene_name)
+    cat("Unique Bugula neritina genes in rhizostol:", length(rhiz_bugula_genes), "\n")
+    print(sort(rhiz_bugula_genes))
+
+# Write these for your paper
+    write.csv(avic_bugula, "avicularium_Bugula_neritina_hits.csv", row.names = FALSE)
+    write.csv(rhiz_bugula, "rhizostol_Bugula_neritina_hits.csv", row.names = FALSE)
+
+# Compare: what genes are in avicularium but NOT rhizoid?
+    avic_unique_genes <- setdiff(avic_bugula_genes, rhiz_bugula_genes)
+    rhiz_unique_genes <- setdiff(rhiz_bugula_genes, avic_bugula_genes)
+    shared_bugula_genes <- intersect(avic_bugula_genes, rhiz_bugula_genes)
+    
+    cat("\nAvicularium-specific Bugula genes:", length(avic_unique_genes), "\n")
+    print(avic_unique_genes)
+    cat("\nRhizostol-specific Bugula genes:", length(rhiz_unique_genes), "\n")
+    print(rhiz_unique_genes)
+    cat("\nShared:", length(shared_bugula_genes), "\n")
+    print(shared_bugula_genes)
+
+
+
+
+
+
+
+# ============================================
+# FIGURE 1: PCA - Global tissue relationships
+# ============================================
+
+    pca <- plotPCA(vsd, intgroup = "tissue", returnData = TRUE)
+    percentVar <- round(100 * attr(pca, "percentVar"))
+    
+    # Add developmental stage
+    pca$stage <- ifelse(grepl("Bud", pca$tissue), "Bud", "Mature")
+    pca$stage[grep("Rhiz", pca$tissue)] <- "Rhizoid"
+    
+    # Custom colors
+    tissue_cols <- c("AutoBud" = "#E41A1C", "AutoMat" = "#377EB8", 
+                     "AvicBud" = "#4DAF4A", "AvicMat" = "#984EA3",
+                     "RhizAuto" = "#FF7F00", "RhizStol" = "#A65628")
+    
+    p1 <- ggplot(pca, aes(PC1, PC2, color = tissue, shape = stage)) +
+      geom_point(size = 5, alpha = 0.85) +
+      geom_text_repel(aes(label = name), size = 3, show.legend = FALSE) +
+      scale_color_manual(values = tissue_cols) +
+      xlab(paste0("PC1: ", percentVar[1], "% variance")) +
+      ylab(paste0("PC2: ", percentVar[2], "% variance")) +
+      ggtitle("Bugulina stolonifera Zooid Transcriptomes") +
+      theme_minimal(base_size = 14) +
+      theme(legend.position = "bottom",
+            plot.title = element_text(face = "bold", hjust = 0.5))
+    
+    ggsave("Figure1_PCA.png", p1, width = 10, height = 8, dpi = 300)
+    print(p1)
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/9a047ca0-f417-444c-9f4e-5ec62dccc318" />
+
+# ============================================
+# FIGURE 2: Sample distance heatmap
+# ============================================
+
+    sampleDists <- dist(t(assay(vsd)))
+    sampleDistMatrix <- as.matrix(sampleDists)
+    
+    ann_col <- data.frame(Tissue = samples$tissue, 
+                          Stage = ifelse(grepl("Bud", samples$tissue), "Bud",
+                                         ifelse(grepl("Rhiz", samples$tissue), "Rhizoid", "Mature")))
+    rownames(ann_col) <- colnames(sampleDistMatrix)
+    
+    ann_colors <- list(
+      Tissue = tissue_cols,
+      Stage = c("Bud" = "#FDB462", "Mature" = "#80B1D3", "Rhizoid" = "#B3DE69")
+    )
+    
+    png("Figure2_SampleDistance.png", width = 8, height = 7, units = "in", res = 300)
+    pheatmap(sampleDistMatrix,
+             clustering_distance_rows = sampleDists,
+             clustering_distance_cols = sampleDists,
+             annotation_col = ann_col,
+             annotation_colors = ann_colors,
+             main = "Sample Distance Matrix",
+             color = colorRampPalette(rev(brewer.pal(9, "Blues")))(100))
+    dev.off()
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/3126e7d3-72d7-4dd4-a1fc-9760eb52be91" />
+
+# ============================================
+# FIGURE 3: DEG counts barplot
+# ============================================
+
+    deg_summary <- data.frame(
+      Comparison = names(deg_counts),
+      DEGs = as.numeric(deg_counts),
+      stringsAsFactors = FALSE
+    )
+    
+    # Clean up names
+    deg_summary$Comparison <- gsub("_vs_", " vs ", deg_summary$Comparison)
+    deg_summary$Comparison <- factor(deg_summary$Comparison, 
+                                     levels = deg_summary$Comparison[order(deg_summary$DEGs)])
+    
+    # Color by comparison type
+    deg_summary$Type <- ifelse(grepl("Avic.*Auto", deg_summary$Comparison), "Avic vs Auto",
+                               ifelse(grepl("Rhiz.*Auto", deg_summary$Comparison), "Rhiz vs Auto",
+                                      ifelse(grepl("Rhiz.*Rhiz", deg_summary$Comparison), "Rhiz vs Rhiz",
+                                             ifelse(grepl("Mat.*Bud", deg_summary$Comparison), "Mature vs Bud", "Other"))))
+    
+    p3 <- ggplot(deg_summary, aes(x = Comparison, y = DEGs, fill = Type)) +
+      geom_bar(stat = "identity", width = 0.7) +
+      geom_text(aes(label = DEGs), hjust = -0.2, size = 4) +
+      coord_flip() +
+      scale_fill_brewer(palette = "Set2") +
+      labs(title = "Differentially Expressed Genes per Comparison",
+           subtitle = paste0("Total expressed genes: ", nrow(norm_counts)),
+           y = "Number of DEGs (padj < 0.05)", x = "") +
+      theme_minimal(base_size = 13) +
+      theme(legend.position = "bottom")
+    
+    ggsave("Figure3_DEG_counts.png", p3, width = 12, height = 6, dpi = 300)
+    print(p3)
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/148db39d-b201-4b76-91b8-6b15b62c8df3" />
+
+# ============================================
+# FIGURE 4: Volcano plot - AvicMat vs AutoMat
+# ============================================
+
+    res_avic_auto <- degs_list[["AvicMat_vs_AutoMat"]]
+    res_df <- as.data.frame(res_avic_auto)
+    res_df$gene <- rownames(res_df)
+    res_df$sig <- "NS"
+    res_df$sig[res_df$padj < 0.05 & res_df$log2FoldChange > 1] <- "Avic ↑"
+    res_df$sig[res_df$padj < 0.05 & res_df$log2FoldChange < -1] <- "Auto ↑"
+    res_df$sig[is.na(res_df$sig)] <- "NS"
+    
+    # Add Bugula neritina annotations for top genes
+    res_df$label <- ""
+    top_genes <- head(res_df[order(res_df$padj), ], 20)
+    res_df$label[res_df$gene %in% top_genes$gene] <- annotations[top_genes$gene, "Preferred_name"]
+    
+    # Clean up labels
+    res_df$label <- gsub("tr\\|.*\\|.*\\|(\\S+)\\s.*", "\\1", res_df$label)
+    res_df$label[res_df$label == "-" | is.na(res_df$label)] <- ""
+    
+    p4 <- ggplot(res_df, aes(log2FoldChange, -log10(padj), color = sig)) +
+      geom_point(size = 0.8, alpha = 0.6) +
+      scale_color_manual(values = c("Avic ↑" = "#984EA3", "Auto ↑" = "#377EB8", "NS" = "grey80")) +
+      geom_vline(xintercept = c(-1, 1), linetype = "dashed", alpha = 0.3) +
+      geom_hline(yintercept = -log10(0.05), linetype = "dashed", alpha = 0.3) +
+      geom_text_repel(aes(label = label), size = 2.5, max.overlaps = 15, color = "black") +
+      labs(title = "Avicularium vs Autozooid (Mature)",
+           subtitle = paste0(sum(res_df$sig == "Avic ↑"), " avicularium-up | ", 
+                             sum(res_df$sig == "Auto ↑"), " autozooid-up"),
+           x = "log2 Fold Change", y = "-log10 adjusted p-value") +
+      theme_minimal(base_size = 13)
+    
+    ggsave("Figure4_Volcano_AvicMat_vs_AutoMat.png", p4, width = 10, height = 8, dpi = 300)
+    print(p4)
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/6ad2927d-8020-454c-bb43-3f3d69e0fe82" />
+
+# ============================================
+# FIGURE 5: Volcano plot - RhizStol vs AutoBud
+# ============================================
+
+    res_rhiz_auto <- degs_list[["RhizStol_vs_AutoBud"]]
+    res_df2 <- as.data.frame(res_rhiz_auto)
+    res_df2$gene <- rownames(res_df2)
+    res_df2$sig <- "NS"
+    res_df2$sig[res_df2$padj < 0.05 & res_df2$log2FoldChange > 1] <- "RhizStol ↑"
+    res_df2$sig[res_df2$padj < 0.05 & res_df2$log2FoldChange < -1] <- "AutoBud ↑"
+    res_df2$sig[is.na(res_df2$sig)] <- "NS"
+    
+    top_genes2 <- head(res_df2[order(res_df2$padj), ], 20)
+    res_df2$label <- ""
+    res_df2$label[res_df2$gene %in% top_genes2$gene] <- annotations[top_genes2$gene, "Preferred_name"]
+    res_df2$label <- gsub("tr\\|.*\\|.*\\|(\\S+)\\s.*", "\\1", res_df2$label)
+    res_df2$label[res_df2$label == "-" | is.na(res_df2$label)] <- ""
+    
+    p5 <- ggplot(res_df2, aes(log2FoldChange, -log10(padj), color = sig)) +
+      geom_point(size = 0.8, alpha = 0.6) +
+      scale_color_manual(values = c("RhizStol ↑" = "#A65628", "AutoBud ↑" = "#E41A1C", "NS" = "grey80")) +
+      geom_vline(xintercept = c(-1, 1), linetype = "dashed", alpha = 0.3) +
+      geom_hline(yintercept = -log10(0.05), linetype = "dashed", alpha = 0.3) +
+      geom_text_repel(aes(label = label), size = 2.5, max.overlaps = 15, color = "black") +
+      labs(title = "Rhizoid Network vs Autozooid Bud",
+           subtitle = paste0(sum(res_df2$sig == "RhizStol ↑"), " rhizoid-up | ", 
+                             sum(res_df2$sig == "AutoBud ↑"), " autozooid-up"),
+           x = "log2 Fold Change", y = "-log10 adjusted p-value") +
+      theme_minimal(base_size = 13)
+    
+    ggsave("Figure5_Volcano_RhizStol_vs_AutoBud.png", p5, width = 10, height = 8, dpi = 300)
+    print(p5)
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/e0b05615-18df-4d24-a0ea-db99a73babbf" />
+
+# ============================================
+# FIGURE 6: Tissue-specific genes heatmap
+# ============================================
+
+    # Get top 10 most specific genes per tissue (by tau)
+    top_specific <- c()
+    for(tissue in colnames(tissue_means)[1:6]) {
+      tissue_genes <- rownames(tissue_means)[tissue_means[, tissue] > 10]
+      tissue_tau <- tau[tissue_genes]
+      top10 <- names(head(sort(tissue_tau, decreasing = TRUE), 10))
+      top_specific <- c(top_specific, top10)
+    }
+    top_specific <- unique(top_specific)
+    
+    heatmap_data <- norm_counts[top_specific, ]
+    rownames(heatmap_data) <- annotations[rownames(heatmap_data), "Preferred_name"]
+    rownames(heatmap_data)[is.na(rownames(heatmap_data)) | rownames(heatmap_data) == "-"] <- 
+      names(which(is.na(rownames(heatmap_data)) | rownames(heatmap_data) == "-"))
+    
+    png("Figure6_TissueSpecific_Heatmap.png", width = 12, height = 10, units = "in", res = 300)
+    pheatmap(heatmap_data,
+             annotation_col = data.frame(Tissue = samples$tissue, row.names = colnames(heatmap_data)),
+             annotation_colors = list(Tissue = tissue_cols),
+             scale = "row",
+             show_rownames = TRUE,
+             fontsize_row = 7,
+             main = "Tissue-Specific Gene Expression",
+             clustering_distance_cols = "correlation",
+             color = colorRampPalette(rev(brewer.pal(11, "RdBu")))(100))
+    dev.off()
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/24f8b3b7-9d4a-4993-84c5-bf439d9805e3" />
+
+# ============================================
+# FIGURE 7: Shared vs Unique genes
+# ============================================
+
+    overlap_df <- data.frame(
+      Tissue = colnames(expressed),
+      Total = colSums(expressed),
+      Unique = sapply(unique_genes, length),
+      Shared = colSums(expressed) - sapply(unique_genes, length)
+    )
+    
+    overlap_long <- pivot_longer(overlap_df, cols = c("Unique", "Shared"), 
+                                 names_to = "Category", values_to = "Count")
+    
+    p7 <- ggplot(overlap_df, aes(x = reorder(Tissue, -Total), y = Total)) +
+      geom_col(aes(fill = "Total"), width = 0.6, alpha = 0.3) +
+      geom_col(aes(y = Shared, fill = "Shared"), width = 0.6) +
+      geom_col(aes(y = Unique, fill = "Unique"), width = 0.6) +
+      geom_text(aes(label = Unique, y = Unique/2), size = 5, fontface = "bold") +
+      scale_fill_manual(values = c("Total" = "grey90", "Shared" = "#4DAF4A", "Unique" = "#E41A1C"),
+                        labels = c("Shared with other tissues", "Total expressed", "Unique to this tissue")) +
+      labs(title = "Genes Expressed per Zooid Type",
+           subtitle = paste0("Unique = expressed only in that tissue | Total expressed genes: ", nrow(expressed)),
+           y = "Number of genes", x = "") +
+      theme_minimal(base_size = 13) +
+      theme(legend.position = "bottom")
+    
+    ggsave("Figure7_Shared_vs_Unique.png", p7, width = 10, height = 6, dpi = 300)
+    print(p7)
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/7da311a1-d2a4-46b0-927d-a3f495aae730" />
+
+# ============================================
+# FIGURE 8: Jaccard similarity heatmap
+# ============================================
+
+    png("Figure8_Jaccard_Similarity.png", width = 7, height = 6, units = "in", res = 300)
+    pheatmap(jaccard,
+             display_numbers = TRUE,
+             number_format = "%.2f",
+             main = "Jaccard Similarity Between Zooid Types",
+             color = colorRampPalette(c("white", "#2166AC"))(100),
+             clustering_distance_rows = as.dist(1 - jaccard),
+             clustering_distance_cols = as.dist(1 - jaccard))
+    dev.off()
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/947923a8-9e6d-4462-bc52-688113f4ff03" />
+
+# ============================================
+# SAVE ALL FIGURE DATA
+# ============================================
+
+    save(p1, p2, p3, p4, p5, p7, pca, deg_summary, res_df, res_df2,
+         jaccard, overlap_df, top_specific,
+         file = "figures_data.RData")
+    
+    cat("\n==================================\n")
+    cat("All figures saved!\n")
+    cat("==================================\n")
+    cat("Figure 1: PCA\n")
+    cat("Figure 2: Sample Distance Heatmap\n")
+    cat("Figure 3: DEG Counts\n")
+    cat("Figure 4: Volcano - Avicularium vs Autozooid (Mature)\n")
+    cat("Figure 5: Volcano - Rhizoid vs Autozooid (Bud)\n")
+    cat("Figure 6: Tissue-Specific Genes Heatmap\n")
+    cat("Figure 7: Shared vs Unique Genes\n")
+    cat("Figure 8: Jaccard Similarity\n")
+    
+
+# ============================================
+# SINGLE VOLCANO PLOT - ALL COMPARISONS OVERLAID
+# Each tissue type has its own color
+# ============================================
+
+    library(DESeq2)
+    library(ggplot2)
+    library(ggrepel)
+    library(dplyr)
+    
+    # Load data
+    load("bugulina_expression.RData")
+    load("full_analysis_with_annotations.RData")
+    
+    # Tissue colors
+    tissue_cols <- c(
+      "AutoBud" = "#E41A1C",
+      "AutoMat" = "#377EB8", 
+      "AvicBud" = "#4DAF4A",
+      "AvicMat" = "#984EA3",
+      "RhizAuto" = "#FF7F00",
+      "RhizStol" = "#A65628"
+    )
+    
+    # Combine all DEG results into one dataframe
+    all_degs <- data.frame()
+    
+    for(name in names(degs_list)) {
+      res <- degs_list[[name]]
+      parts <- strsplit(name, "_vs_")[[1]]
+      tissue1 <- parts[1]
+      tissue2 <- parts[2]
+      
+      # Get significant DEGs
+      sig <- res[which(res$padj < 0.05 & abs(res$log2FoldChange) > 1), ]
+      
+      if(nrow(sig) > 0) {
+        df <- data.frame(
+          gene = rownames(sig),
+          log2FC = sig$log2FoldChange,
+          padj = sig$padj,
+          comparison = name,
+          # Color by which tissue is upregulated
+          direction = ifelse(sig$log2FoldChange > 0, tissue1, tissue2),
+          stringsAsFactors = FALSE
+        )
+        all_degs <- rbind(all_degs, df)
+      }
+    }
+    
+    cat("Total significant DEGs across all comparisons:", nrow(all_degs), "\n")
+    cat("DEGs per tissue direction:\n")
+    print(table(all_degs$direction))
+    
+    # Add gene names for the very top DEGs (most significant overall)
+    all_degs <- all_degs[order(all_degs$padj), ]
+    top_genes <- head(unique(all_degs$gene), 30)
+    
+    all_degs$label <- ""
+    for(gene in top_genes) {
+      gene_name <- annotations[gene, "Preferred_name"]
+      if(!is.na(gene_name) && gene_name != "-") {
+        gene_name <- gsub("tr\\|.*\\|.*\\|(\\S+)\\sOS=.*", "\\1", gene_name)
+        all_degs$label[all_degs$gene == gene] <- gene_name
+      }
+    }
+
+# Create the combined volcano plot
+    p_combined <- ggplot(all_degs, aes(log2FC, -log10(padj))) +
+      # Background: all points in grey
+      geom_point(data = all_degs, aes(color = direction), size = 0.8, alpha = 0.5) +
+      scale_color_manual(values = tissue_cols, name = "Upregulated in:") +
+      # Threshold lines
+      geom_vline(xintercept = c(-1, 1), linetype = "dashed", alpha = 0.3, color = "grey40") +
+      geom_hline(yintercept = -log10(0.05), linetype = "dashed", alpha = 0.3, color = "grey40") +
+      # Labels for top genes
+      geom_text_repel(aes(label = label), size = 2.5, max.overlaps = 20, 
+                      color = "black", box.padding = 0.3) +
+      labs(title = "Differential Expression Across All Zooid Comparisons",
+           subtitle = paste0("Total DEGs: ", nrow(all_degs), 
+                             " | padj < 0.05, |log2FC| > 1"),
+           x = "log2 Fold Change", 
+           y = "-log10 adjusted p-value") +
+      theme_minimal(base_size = 13) +
+      theme(legend.position = "right",
+            plot.title = element_text(face = "bold", size = 14),
+            plot.subtitle = element_text(size = 10))
+    
+    ggsave("Volcano_All_Comparisons.png", p_combined, width = 12, height = 8, dpi = 300)
+    print(p_combined)
+<img width="1067" height="880" alt="image" src="https://github.com/user-attachments/assets/8e51286f-f82e-48d4-8b88-ac269de6aafc" />
+
+# Summary stats
+    cat("\n=== DEGs upregulated per tissue ===\n")
+    deg_direction_counts <- table(all_degs$direction)
+    for(tissue in names(tissue_cols)) {
+      count <- deg_direction_counts[tissue]
+      if(!is.na(count)) {
+        cat(tissue, ":", count, "DEGs\n")
+      }
+    }
+            AutoBud : 5548 DEGs
+            AutoMat : 2251 DEGs
+            AvicBud : 2604 DEGs
+            AvicMat : 2901 DEGs
+            RhizAuto : 1299 DEGs
+            RhizStol : 2402 DEGs
