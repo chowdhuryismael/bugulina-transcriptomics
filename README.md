@@ -1721,3 +1721,561 @@ a# ============================================
             AvicMat : 2901 DEGs
             RhizAuto : 1299 DEGs
             RhizStol : 2402 DEGs
+# ============================================
+# CROSS-SPECIES BRYOZOAN TRANSCRIPTOMICS
+# Bugulina flabellata vs Bugulina stolonifera
+# ============================================
+
+library(DESeq2)
+library(tximport)
+library(clusterProfiler)
+library(enrichplot)
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(pheatmap)
+library(seqinr)
+library(ggrepel)
+
+> # Working directory is B_kaewa (B. flabellata data)
+> setwd("C:/Users/chois652/OneDrive - University of Otago/Desktop/PhD thesis/thesis paper/genetic/Bryozoa RNA/B_kaewa")
+> # Path to B. stolonifera data
+> stol_dir <- "C:/Users/chois652/OneDrive - University of Otago/Desktop/PhD thesis/thesis paper/genetic/Bryozoa RNA/bugulina stolonifera"
+> # Load B. stolonifera data from its folder
+> load(file.path(stol_dir, "bugulina_expression.RData"))
+> load(file.path(stol_dir, "tissue_specificity_analysis.RData"))
+> load(file.path(stol_dir, "full_analysis_with_annotations.RData"))
+> cat("\n=== B. stolonifera data loaded ===\n")
+
+=== B. stolonifera data loaded ===
+> cat("  norm_counts:", nrow(norm_counts), "transcripts x", ncol(norm_counts), "samples\n")
+  norm_counts: 62577 transcripts x 18 samples
+> cat("  annotations:", nrow(annotations), "rows x", ncol(annotations), "cols\n")
+  annotations: 62577 rows x 9 cols
+> cat("  Annotation columns:", paste(colnames(annotations), collapse=", "), "\n")
+  Annotation columns: transcript, uniprot_id, description, evalue_nt, GO_terms, KEGG_ko, KEGG_pathway, COG_category, eggNOG_desc 
+> cat("\n=== Loading B. flabellata annotations ===\n")
+
+=== Loading B. flabellata annotations ===
+> # Diamond nucleotide
+> flab_diamond_nt <- read.table("diamond_full_nt.txt", sep="\t", 
++                               stringsAsFactors=FALSE, quote="")
+> colnames(flab_diamond_nt) <- c("transcript", "uniprot_id", "pident", "length",
++                                "mismatch", "gapopen", "qstart", "qend",
++                                "sstart", "send", "evalue", "bitscore", "description")
+> # Diamond protein
+> flab_diamond_prot <- read.table("diamond_full_prot.txt", sep="\t",
++                                 stringsAsFactors=FALSE, quote="")
+> colnames(flab_diamond_prot) <- colnames(flab_diamond_nt)
+> # eggNOG - NOTE: the file might be named differently; check both possibilities
+> eggnog_file <- ifelse(file.exists("full_transcriptome_eggnog.emapper.annotations"),
++                       "full_transcriptome_eggnog.emapper.annotations",
++                       "eggnog.emapper.annotations")
+> flab_eggnog <- read.table(eggnog_file,
++                           sep="\t", header=TRUE, stringsAsFactors=FALSE,
++                           quote="", comment.char="", na.strings="-",
++                           fill=TRUE, skip=4)
+> colnames(flab_eggnog)[1] <- "query"
+> colnames(flab_eggnog)[colnames(flab_eggnog)=="GOs"] <- "GO_terms"
+> colnames(flab_eggnog)[colnames(flab_eggnog)=="Preferred_name"] <- "Preferred_name"
+> # InterProScan
+> col_names_ipr <- c("protein", "md5", "length", "analysis", "signature",
++                    "signature_desc", "start", "stop", "score", "status",
++                    "date", "interpro_id", "interpro_desc", "go_terms", "pathways")
+> flab_interpro <- read.table("interproscan.tabular", sep="\t",
++                             stringsAsFactors=FALSE, quote="", comment.char="",
++                             fill=TRUE, col.names=col_names_ipr)
+> # Load B. flabellata transcriptome sequences
+> flab_fasta <- read.fasta("B_K_reference_transcriptome.fas")
+> flab_transcripts <- names(flab_fasta)
+> cat("B. flabellata transcripts:", length(flab_transcripts), "\n")
+B. flabellata transcripts: 28142 
+> # Strip .p suffixes for matching (eggNOG uses protein IDs like .p1, .p2)
+> flab_eggnog$transcript_base <- gsub("\\.p\\d+$", "", flab_eggnog$query)
+> flab_interpro$transcript_base <- gsub("\\.p\\d+$", "", flab_interpro$protein)
+> cat("\n=== Building B. flabellata annotation table ===\n")
+
+=== Building B. flabellata annotation table ===
+> # Best hits per transcript from Diamond
+> flab_best_nt <- flab_diamond_nt %>%
++   group_by(transcript) %>%
++   slice_min(evalue, n=1) %>%
++   slice_max(bitscore, n=1) %>%
++   ungroup()
+> flab_best_prot <- flab_diamond_prot %>%
++   group_by(transcript) %>%
++   slice_min(evalue, n=1) %>%
++   slice_max(bitscore, n=1) %>%
++   ungroup()
+> # Build annotation table with transcript IDs as rownames
+> flab_annotations <- data.frame(
++   transcript = flab_transcripts,
++   row.names = flab_transcripts,
++   stringsAsFactors = FALSE
++ )
+> # Diamond nt hits (match directly - transcript IDs should match)
+> flab_annotations$uniprot_id <- flab_best_nt$uniprot_id[match(flab_annotations$transcript, flab_best_nt$transcript)]
+> # Diamond nt hits (match directly - transcript IDs should match)
+> flab_annotations$uniprot_id <- flab_best_nt$uniprot_id[match(flab_annotations$transcript, flab_best_nt$transcript)]
+> flab_annotations$description <- flab_best_nt$description[match(flab_annotations$transcript, flab_best_nt$transcript)]
+> flab_annotations$evalue_nt <- flab_best_nt$evalue[match(flab_annotations$transcript, flab_best_nt$transcript)]
+> # eggNOG annotations - use transcript_base for matching (no .p suffix)
+> flab_annotations$GO_terms <- flab_eggnog$GO_terms[match(flab_annotations$transcript, flab_eggnog$transcript_base)]
+> flab_annotations$KEGG_ko <- flab_eggnog$KEGG_ko[match(flab_annotations$transcript, flab_eggnog$transcript_base)]
+> flab_annotations$KEGG_pathway <- flab_eggnog$KEGG_Pathway[match(flab_annotations$transcript, flab_eggnog$transcript_base)]
+> flab_annotations$COG_category <- flab_eggnog$COG_category[match(flab_annotations$transcript, flab_eggnog$transcript_base)]
+> flab_annotations$eggNOG_desc <- flab_eggnog$Description[match(flab_annotations$transcript, flab_eggnog$transcript_base)]
+> flab_annotations$Preferred_name <- flab_eggnog$Preferred_name[match(flab_annotations$transcript, flab_eggnog$transcript_base)]
+> cat("B. flabellata annotations built:", nrow(flab_annotations), "transcripts\n")
+B. flabellata annotations built: 28142 transcripts
+> cat("  With Diamond BLAST hits:", sum(!is.na(flab_annotations$description)), "\n")
+  With Diamond BLAST hits: 22830 
+> cat("  With GO terms:", sum(!is.na(flab_annotations$GO_terms) & flab_annotations$GO_terms != "-"), "\n")
+  With GO terms: 13689 
+> cat("  With Preferred_name:", sum(!is.na(flab_annotations$Preferred_name) & flab_annotations$Preferred_name != "-"), "\n")
+  With Preferred_name: 14030 
+> cat("\n=== Verifying B. stolonifera annotations ===\n")
+
+=== Verifying B. stolonifera annotations ===
+> cat("  Rows:", nrow(annotations), "\n")
+  Rows: 62577 
+> cat("  With BLAST hits:", sum(!is.na(annotations$description)), "\n")
+  With BLAST hits: 42256 
+> # Check what GO column exists
+> go_col_stol <- grep("GO", colnames(annotations), value=TRUE)
+> cat("  GO columns found:", paste(go_col_stol, collapse=", "), "\n")
+  GO columns found: GO_terms 
+> if(length(go_col_stol) > 0) {
++   cat("  With GO terms:", sum(!is.na(annotations[[go_col_stol[1]]]) & annotations[[go_col_stol[1]]] != "-"), "\n")
++ }
+  With GO terms: 0 
+> # Check what the eggnog query IDs look like
+> cat("Sample eggnog query IDs:\n")
+Sample eggnog query IDs:
+> print(head(eggnog$query, 5))
+[1] "TRINITY_DN100005_c0_g2_i1.p2" "TRINITY_DN100014_c0_g1_i1.p1" "TRINITY_DN100038_c0_g1_i1.p1" "TRINITY_DN100054_c0_g1_i1.p1" "TRINITY_DN100065_c0_g1_i1.p1"
+> cat("\nSample annotation transcript IDs:\n")
+
+Sample annotation transcript IDs:
+> print(head(annotations$transcript, 5))
+[1] "TRINITY_DN174602_c0_g1_i1" "TRINITY_DN117250_c0_g2_i1" "TRINITY_DN117224_c0_g1_i1" "TRINITY_DN117257_c0_g1_i1" "TRINITY_DN117257_c0_g2_i1"
+> # eggnog$transcript_base already exists (created in original script)
+> # Let's verify
+> if(!"transcript_base" %in% colnames(eggnog)) {
++   eggnog$transcript_base <- gsub("\\.p\\d+$", "", eggnog$query)
++ }
+> # Now fix the GO terms using transcript_base for matching
+> annotations$GO_terms <- eggnog$GO_terms[match(annotations$transcript, eggnog$transcript_base)]
+> annotations$KEGG_ko <- eggnog$KEGG_ko[match(annotations$transcript, eggnog$transcript_base)]
+> annotations$KEGG_pathway <- eggnog$KEGG_Pathway[match(annotations$transcript, eggnog$transcript_base)]
+> annotations$COG_category <- eggnog$COG_category[match(annotations$transcript, eggnog$transcript_base)]
+> annotations$eggNOG_desc <- eggnog$Description[match(annotations$transcript, eggnog$transcript_base)]
+> # Also add Preferred_name if it exists
+> if("Preferred_name" %in% colnames(eggnog)) {
++   annotations$Preferred_name <- eggnog$Preferred_name[match(annotations$transcript, eggnog$transcript_base)]
++ }
+> # Verify the fix
+> cat("\n=== After fix ===\n")
+
+=== After fix ===
+> cat("  With GO terms:", sum(!is.na(annotations$GO_terms) & annotations$GO_terms != "-" & annotations$GO_terms != ""), "\n")
+  With GO terms: 20490 
+> cat("  With Preferred_name:", sum(!is.na(annotations$Preferred_name) & annotations$Preferred_name != "-"), "\n")
+  With Preferred_name: 20879 
+> # Check a few examples
+> cat("\nSample GO terms after fix:\n")
+
+Sample GO terms after fix:
+> go_fixed <- annotations$GO_terms[!is.na(annotations$GO_terms) & annotations$GO_terms != "-" & annotations$GO_terms != ""]
+> print(head(go_fixed, 3))
+[1] "GO:0000902,GO:0000904,GO:0002376,GO:0002520,GO:0003674,GO:0003824,GO:0004175,GO:0004197,GO:0005488,GO:0005515,GO:0005575,GO:0005622,GO:0005623,GO:0005634,GO:0005737,GO:0005739,GO:0005829,GO:0006508,GO:0006807,GO:0006915,GO:0006919,GO:0006950,GO:0006974,GO:0007154,GO:0007165,GO:0007166,GO:0007275,GO:0008047,GO:0008150,GO:0008152,GO:0008219,GO:0008233,GO:0008234,GO:0008630,GO:0008635,GO:0009314,GO:0009410,GO:0009411,GO:0009416,GO:0009628,GO:0009653,GO:0009719,GO:0009725,GO:0009893,GO:0009987,GO:0010033,GO:0010604,GO:0010941,GO:0010942,GO:0010950,GO:0010952,GO:0012501,GO:0014070,GO:0016043,GO:0016787,GO:0017124,GO:0019222,GO:0019538,GO:0019899,GO:0019900,GO:0019901,GO:0019904,GO:0023052,GO:0030097,GO:0030099,GO:0030154,GO:0030162,GO:0030220,GO:0030234,GO:0031323,GO:0031325,GO:0031960,GO:0032268,GO:0032270,GO:0032501,GO:0032502,GO:0032870,GO:0032989,GO:0032991,GO:0033554,GO:0033993,GO:0034644,GO:0034976,GO:0035556,GO:0035690,GO:0036344,GO:0038034,GO:0042221,GO:0042493,GO:0042770,GO:0042802,GO:0042981,GO:0043065,GO:0043067,GO:0043068,GO:0043085,GO:0043170,GO:0043226,GO:0043227,GO:0043229,GO:0043231,GO:0043280,GO:0043281,GO:0043293,GO:0043523,GO:0043525,GO:0044093,GO:0044238,GO:0044424,GO:0044444,GO:0044445,GO:0044464,GO:0045862,GO:0048468,GO:0048513,GO:0048518,GO:0048522,GO:0048534,GO:0048545,GO:0048583,GO:0048646,GO:0048731,GO:0048856,GO:0048869,GO:0050789,GO:0050790,GO:0050794,GO:0050896,GO:0051171,GO:0051173,GO:0051246,GO:0051247,GO:0051336,GO:0051345,GO:0051384,GO:0051716,GO:0052547,GO:0052548,GO:0060255,GO:0065007,GO:0065009,GO:0070011,GO:0070059,GO:0070887,GO:0071214,GO:0071310,GO:0071383,GO:0071384,GO:0071385,GO:0071396,GO:0071407,GO:0071466,GO:0071478,GO:0071482,GO:0071495,GO:0071548,GO:0071549,GO:0071704,GO:0071840,GO:0080090,GO:0080134,GO:0080135,GO:0097153,GO:0097190,GO:0097191,GO:0097192,GO:0097193,GO:0097194,GO:0097200,GO:0097327,GO:0098772,GO:0104004,GO:0140096,GO:1901214,GO:1901216,GO:1901564,GO:1901654,GO:1901655,GO:1901700,GO:1901701,GO:2000116,GO:2 ... <truncated>
+[2] "GO:0000012,GO:0000302,GO:0000375,GO:0000377,GO:0000398,GO:0000785,GO:0003674,GO:0003676,GO:0003677,GO:0003682,GO:0003684,GO:0003690,GO:0003723,GO:0003725,GO:0003824,GO:0004518,GO:0004527,GO:0004529,GO:0004536,GO:0005488,GO:0005515,GO:0005575,GO:0005622,GO:0005623,GO:0005634,GO:0005654,GO:0005694,GO:0005730,GO:0006139,GO:0006259,GO:0006266,GO:0006281,GO:0006302,GO:0006396,GO:0006397,GO:0006725,GO:0006793,GO:0006796,GO:0006807,GO:0006950,GO:0006974,GO:0006979,GO:0008150,GO:0008152,GO:0008380,GO:0008409,GO:0008967,GO:0009636,GO:0009987,GO:0010035,GO:0010467,GO:0016070,GO:0016071,GO:0016311,GO:0016787,GO:0016788,GO:0016791,GO:0016796,GO:0016895,GO:0031647,GO:0031974,GO:0031981,GO:0033554,GO:0033699,GO:0034641,GO:0035312,GO:0042221,GO:0042493,GO:0042542,GO:0042578,GO:0043167,GO:0043169,GO:0043170,GO:0043226,GO:0043227,GO:0043228,GO:0043229,GO:0043231,GO:0043232,GO:0043233,GO:0044237,GO:0044238,GO:0044260,GO:0044422,GO:0044424,GO:0044427,GO:0044428,GO:0044446,GO:0044464,GO:0046403,GO:0046483,GO:0046677,GO:0046872,GO:0047485,GO:0050896,GO:0051219,GO:0051716,GO:0065007,GO:0065008,GO:0070013,GO:0071704,GO:0090304,GO:0090305,GO:0097159,GO:0098501,GO:0098506,GO:0098518,GO:0140097,GO:1901360,GO:1901363,GO:1901700"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       ... <truncated>
+[3] "GO:0000902,GO:0000904,GO:0001085,GO:0001103,GO:0001654,GO:0001655,GO:0001736,GO:0001738,GO:0001754,GO:0002009,GO:0003008,GO:0003407,GO:0003674,GO:0005488,GO:0005515,GO:0005575,GO:0005622,GO:0005623,GO:0005737,GO:0005813,GO:0005815,GO:0005829,GO:0005856,GO:0005929,GO:0006810,GO:0006928,GO:0006935,GO:0006996,GO:0007017,GO:0007018,GO:0007164,GO:0007275,GO:0007389,GO:0007399,GO:0007409,GO:0007411,GO:0007417,GO:0007420,GO:0007423,GO:0007600,GO:0007606,GO:0007608,GO:0007610,GO:0007611,GO:0007612,GO:0007635,GO:0008104,GO:0008134,GO:0008150,GO:0008306,GO:0008355,GO:0009605,GO:0009653,GO:0009798,GO:0009887,GO:0009888,GO:0009987,GO:0010638,GO:0010970,GO:0015630,GO:0016020,GO:0016043,GO:0021537,GO:0021772,GO:0021988,GO:0022008,GO:0022607,GO:0030030,GO:0030031,GO:0030154,GO:0030182,GO:0030425,GO:0030705,GO:0030855,GO:0030900,GO:0031175,GO:0031344,GO:0031346,GO:0031503,GO:0032231,GO:0032386,GO:0032388,GO:0032391,GO:0032501,GO:0032502,GO:0032879,GO:0032880,GO:0032886,GO:0032956,GO:0032970,GO:0032989,GO:0032990,GO:0032991,GO:0033036,GO:0033043,GO:0034260,GO:0034464,GO:0034613,GO:0035264,GO:0035295,GO:0035869,GO:0036064,GO:0036477,GO:0040007,GO:0040011,GO:0042048,GO:0042073,GO:0042221,GO:0042330,GO:0042490,GO:0042995,GO:0043005,GO:0043010,GO:0043086,GO:0043087,GO:0043226,GO:0043228,GO:0043229,GO:0043232,GO:0043583,GO:0044085,GO:0044087,GO:0044092,GO:0044292,GO:0044422,GO:0044424,GO:0044430,GO:0044441,GO:0044444,GO:0044446,GO:0044463,GO:0044464,GO:0044782,GO:0045444,GO:0046530,GO:0046907,GO:0048468,GO:0048513,GO:0048518,GO:0048519,GO:0048522,GO:0048560,GO:0048589,GO:0048592,GO:0048593,GO:0048666,GO:0048667,GO:0048699,GO:0048729,GO:0048731,GO:0048812,GO:0048839,GO:0048856,GO:0048858,GO:0048869,GO:0050789,GO:0050790,GO:0050794,GO:0050877,GO:0050890,GO:0050893,GO:0050896,GO:0051049,GO:0051050,GO:0051128,GO:0051130,GO:0051179,GO:0051234,GO:0051270,GO:0051272,GO:0051336,GO:0051346,GO:0051492,GO:0051493,GO:0051641,GO:0051649,GO:0060041,GO:0060042,GO:0060113,GO:0060119,GO:0060122,GO:0 ... <truncated>
+> # Save the fixed annotations
+> save(annotations, eggnog, interpro, best_hits_nt, best_hits_prot,
++      file=file.path(stol_dir, "master_annotation.RData"))
+> cat("\n=== B. stolonifera annotations FIXED ===\n")
+
+=== B. stolonifera annotations FIXED ===
+> cat("  With GO terms:", sum(!is.na(annotations$GO_terms) & annotations$GO_terms != "-"), "\n")
+  With GO terms: 20490 
+> cat("  With Preferred_name:", sum(!is.na(annotations$Preferred_name) & annotations$Preferred_name != "-"), "\n")
+  With Preferred_name: 20879 
+> cat("\n=== Identifying orthologs ===\n")
+
+=== Identifying orthologs ===
+> parse_blast <- function(file) {
++   df <- read.table(file, sep="\t", stringsAsFactors=FALSE)
++   colnames(df) <- c("qseqid", "sseqid", "pident", "length", "mismatch", 
++                     "gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore")
++   return(df)
++ }
+> flab_to_stol <- parse_blast("flab_to_stol.tab")
+> stol_to_flab <- parse_blast("stol_to_flab.tab")
+> cat("BLAST hits: B. flabellata -> B. stolonifera:", nrow(flab_to_stol), "\n")
+BLAST hits: B. flabellata -> B. stolonifera: 63053 
+> cat("BLAST hits: B. stolonifera -> B. flabellata:", nrow(stol_to_flab), "\n")
+BLAST hits: B. stolonifera -> B. flabellata: 100558 
+> best_flab_to_stol <- flab_to_stol %>%
++   group_by(qseqid) %>%
++   slice_min(evalue, n=1) %>%
++   slice_max(bitscore, n=1) %>%
++   ungroup()
+> best_stol_to_flab <- stol_to_flab %>%
++   group_by(qseqid) %>%
++   slice_min(evalue, n=1) %>%
++   slice_max(bitscore, n=1) %>%
++   ungroup()
+> orthologs <- best_flab_to_stol %>%
++   inner_join(best_stol_to_flab,
++              by=c("qseqid"="sseqid", "sseqid"="qseqid"),
++              suffix=c("_f2s", "_s2f"),
++              relationship = "many-to-many") %>%
++   rename(flab_transcript = qseqid,
++          stol_transcript = sseqid)
+> cat("\n=== RECIPROCAL BEST HITS:", nrow(orthologs), "===\n")
+
+=== RECIPROCAL BEST HITS: 15816 ===
+> cat("B. flabellata transcripts with orthologs:", 
++     length(unique(orthologs$flab_transcript)), "/", length(flab_transcripts),
++     "(", round(100*length(unique(orthologs$flab_transcript))/length(flab_transcripts), 1), "%)\n")
+B. flabellata transcripts with orthologs: 12683 / 28142 ( 45.1 %)
+> cat("B. stolonifera transcripts with orthologs:",
++     length(unique(orthologs$stol_transcript)), "/", nrow(annotations),
++     "(", round(100*length(unique(orthologs$stol_transcript))/nrow(annotations), 1), "%)\n")
+B. stolonifera transcripts with orthologs: 13187 / 62577 ( 21.1 %)
+> cat("\n=== Building combined ortholog table ===\n")
+
+=== Building combined ortholog table ===
+> ortholog_table <- data.frame(
++   flab_transcript = orthologs$flab_transcript,
++   stol_transcript = orthologs$stol_transcript,
++   pident = orthologs$pident_f2s,
++   evalue = orthologs$evalue_f2s,
++   bitscore = orthologs$bitscore_f2s,
++   stringsAsFactors = FALSE
++ )
+> # Add flabellata annotations
+> ortholog_table$flab_desc <- flab_annotations[ortholog_table$flab_transcript, "description"]
+> ortholog_table$flab_GO <- flab_annotations[ortholog_table$flab_transcript, "GO_terms"]
+> ortholog_table$flab_eggNOG <- flab_annotations[ortholog_table$flab_transcript, "eggNOG_desc"]
+> ortholog_table$flab_name <- flab_annotations[ortholog_table$flab_transcript, "Preferred_name"]
+> # Add stolonifera annotations
+> ortholog_table$stol_desc <- annotations[ortholog_table$stol_transcript, "description"]
+> ortholog_table$stol_GO <- annotations[ortholog_table$stol_transcript, "GO_terms"]
+> ortholog_table$stol_eggNOG <- annotations[ortholog_table$stol_transcript, "eggNOG_desc"]
+> ortholog_table$stol_name <- annotations[ortholog_table$stol_transcript, "Preferred_name"]
+> ortholog_table$same_desc <- ortholog_table$flab_desc == ortholog_table$stol_desc
+> cat("Orthologs with identical BLAST descriptions:", 
++     sum(ortholog_table$same_desc, na.rm=TRUE), "/", nrow(ortholog_table),
++     "(", round(100*sum(ortholog_table$same_desc, na.rm=TRUE)/nrow(ortholog_table), 1), "%)\n")
+Orthologs with identical BLAST descriptions: 12054 / 15816 ( 76.2 %)
+> save(ortholog_table, orthologs, file="cross_species_orthologs.RData")
+> write.csv(ortholog_table, "ortholog_table_annotated.csv", row.names=FALSE)
+> cat("\n=== Mapping gene sets across species ===\n")
+
+=== Mapping gene sets across species ===
+> # Load B. stolonifera gene sets
+> avic_core <- read.table(file.path(stol_dir, "avicularium_core_genes.txt"), 
++                         stringsAsFactors=FALSE)[,1]
+> rhiz_up <- read.table(file.path(stol_dir, "rhizostol_up_genes.txt"), 
++                       stringsAsFactors=FALSE)[,1]
+> shared_all <- read.table(file.path(stol_dir, "shared_all_6_tissues.txt"), 
++                          stringsAsFactors=FALSE)[,1]
+> unique_genes_files <- list.files(stol_dir, pattern="^unique_.*\\.txt$", full.names=TRUE)
+> unique_genes_stol <- list()
+> for(f in unique_genes_files) {
++   tissue <- gsub("unique_(.*)\\.txt", "\\1", basename(f))
++   unique_genes_stol[[tissue]] <- read.table(f, stringsAsFactors=FALSE)[,1]
++ }
+> map_to_flab <- function(stol_genes, ortholog_df) {
++   ortholog_df %>%
++     filter(stol_transcript %in% stol_genes) %>%
++     pull(flab_transcript) %>%
++     unique()
++ }
+> avic_core_flab <- map_to_flab(avic_core, ortholog_table)
+> rhiz_up_flab <- map_to_flab(rhiz_up, ortholog_table)
+> shared_all_flab <- map_to_flab(shared_all, ortholog_table)
+> unique_genes_flab <- list()
+> for(tissue in names(unique_genes_stol)) {
++   unique_genes_flab[[tissue]] <- map_to_flab(unique_genes_stol[[tissue]], ortholog_table)
++ }
+> cat("\n=========================================\n")
+
+=========================================
+> cat("GENE SET CONSERVATION SUMMARY\n")
+GENE SET CONSERVATION SUMMARY
+> cat("=========================================\n")
+=========================================
+> cat(sprintf("%-40s %5s/%-5s (%5.1f%%)\n", 
++             "Avicularium core genes:", 
++             length(avic_core_flab), length(avic_core),
++             100*length(avic_core_flab)/length(avic_core)))
+Avicularium core genes:                    103/930   ( 11.1%)
+> cat(sprintf("%-40s %5s/%-5s (%5.1f%%)\n", 
++             "Rhizostol-up genes:", 
++             length(rhiz_up_flab), length(rhiz_up),
++             100*length(rhiz_up_flab)/length(rhiz_up)))
+Rhizostol-up genes:                        457/1972  ( 23.2%)
+> cat(sprintf("%-40s %5s/%-5s (%5.1f%%)\n", 
++             "Shared all tissues:", 
++             length(shared_all_flab), length(shared_all),
++             100*length(shared_all_flab)/length(shared_all)))
+Shared all tissues:                        301/347   ( 86.7%)
+> for(tissue in names(unique_genes_flab)) {
++   n_stol <- length(unique_genes_stol[[tissue]])
++   n_flab <- length(unique_genes_flab[[tissue]])
++   if(n_stol > 0) {
++     cat(sprintf("  Unique %-15s %5d/%-5d (%5.1f%%)\n", 
++                 paste0(tissue, ":"), n_flab, n_stol,
++                 100*n_flab/n_stol))
++   }
++ }
+  Unique AutoBud:           27/44    ( 61.4%)
+  Unique AutoMat:           99/220   ( 45.0%)
+  Unique AvicBud:           51/143   ( 35.7%)
+  Unique AvicMat:           43/80    ( 53.8%)
+  Unique RhizAuto:           8/16    ( 50.0%)
+  Unique RhizStol:         107/266   ( 40.2%)
+> # Save mapped gene sets
+> write.table(avic_core_flab, "flabellata_avicularium_core_orthologs.txt", 
++             quote=FALSE, row.names=FALSE, col.names=FALSE)
+> write.table(rhiz_up_flab, "flabellata_rhizostol_up_orthologs.txt",
++             quote=FALSE, row.names=FALSE, col.names=FALSE)
+> write.table(shared_all_flab, "flabellata_shared_all_orthologs.txt",
++             quote=FALSE, row.names=FALSE, col.names=FALSE)
+> cat("\n=== GO Enrichment Analysis ===\n")
+
+=== GO Enrichment Analysis ===
+> # GO mapping for B. flabellata
+> flab_go_list <- strsplit(flab_eggnog$GO_terms, ",")
+> names(flab_go_list) <- flab_eggnog$transcript_base
+> flab_go_list <- flab_go_list[!is.na(flab_go_list)]
+> flab_go_mapping <- data.frame(
++   transcript = rep(names(flab_go_list), sapply(flab_go_list, length)),
++   GO = unlist(flab_go_list),
++   stringsAsFactors = FALSE
++ )
+> flab_go_mapping <- flab_go_mapping[!is.na(flab_go_mapping$GO) & 
++                                      flab_go_mapping$GO != "-" & 
++                                      flab_go_mapping$GO != "", ]
+> # GO mapping for B. stolonifera
+> stol_go_list <- strsplit(eggnog$GO_terms, ",")
+> names(stol_go_list) <- eggnog$transcript_base
+> stol_go_list <- stol_go_list[!is.na(stol_go_list)]
+> stol_go_mapping <- data.frame(
++   transcript = rep(names(stol_go_list), sapply(stol_go_list, length)),
++   GO = unlist(stol_go_list),
++   stringsAsFactors = FALSE
++ )
+> stol_go_mapping <- stol_go_mapping[!is.na(stol_go_mapping$GO) & 
++                                      stol_go_mapping$GO != "-" & 
++                                      stol_go_mapping$GO != "", ]
+> cat("B. flabellata GO pairs:", nrow(flab_go_mapping), "\n")
+B. flabellata GO pairs: 2244558 
+> cat("B. stolonifera GO pairs:", nrow(stol_go_mapping), "\n")
+B. stolonifera GO pairs: 4930374 
+> run_go <- function(gene_set, name, go_map, universe) {
++   cat("\n--- GO:", name, "---\n")
++   if(length(gene_set) < 5) {
++     cat("  Too few genes\n")
++     return(NULL)
++   }
++   ego <- enricher(gene=gene_set, universe=universe,
++                   TERM2GENE=go_map[, c("GO", "transcript")],
++                   pvalueCutoff=0.05, qvalueCutoff=0.1)
++   if(!is.null(ego) && nrow(ego@result) > 0) {
++     cat("  Found", nrow(ego@result), "enriched terms\n")
++     write.csv(as.data.frame(ego), paste0("GO_", name, ".csv"))
++     return(ego)
++   } else {
++     cat("  No enrichment\n")
++     return(NULL)
++   }
++ }
+> go_stol_avic <- run_go(avic_core, "Stol_Avicularium_core", stol_go_mapping, rownames(annotations))
+
+--- GO: Stol_Avicularium_core ---
+  Found 10862 enriched terms
+> go_stol_rhiz <- run_go(rhiz_up, "Stol_Rhizostol_up", stol_go_mapping, rownames(annotations))
+
+--- GO: Stol_Rhizostol_up ---
+  Found 10862 enriched terms
+> go_flab_avic <- run_go(avic_core_flab, "Flab_Avicularium_core", flab_go_mapping, flab_transcripts)
+
+--- GO: Flab_Avicularium_core ---
+  Found 9264 enriched terms
+> go_flab_rhiz <- run_go(rhiz_up_flab, "Flab_Rhizostol_up", flab_go_mapping, flab_transcripts)
+
+--- GO: Flab_Rhizostol_up ---
+  Found 9264 enriched terms
+> # Compare GO between species
+> compare_go <- function(go_stol, go_flab, label) {
++   cat("\n=== GO Comparison:", label, "===\n")
++   if(is.null(go_stol) || is.null(go_flab)) {
++     cat("  Cannot compare\n")
++     return(NULL)
++   }
++   shared <- intersect(go_stol@result$ID, go_flab@result$ID)
++   cat("  Shared:", length(shared), "\n")
++   cat("  Stol only:", length(setdiff(go_stol@result$ID, go_flab@result$ID)), "\n")
++   cat("  Flab only:", length(setdiff(go_flab@result$ID, go_stol@result$ID)), "\n")
++   if(length(shared) > 0) {
++     cat("  Top shared:\n")
++     for(d in head(go_stol@result$Description[go_stol@result$ID %in% shared], 10)) {
++       cat("    -", d, "\n")
++     }
++   }
++   return(list(shared=shared))
++ }
+> go_comp_avic <- compare_go(go_stol_avic, go_flab_avic, "Avicularium")
+
+=== GO Comparison: Avicularium ===
+  Shared: 8791 
+  Stol only: 2071 
+  Flab only: 473 
+  Top shared:
+    - GO:0030018 
+    - GO:0031674 
+    - GO:0035158 
+    - GO:0043296 
+    - GO:0097531 
+    - GO:0001779 
+    - GO:0035172 
+    - GO:0030720 
+    - GO:0042129 
+    - GO:0001553 
+> go_comp_rhiz <- compare_go(go_stol_rhiz, go_flab_rhiz, "Rhizostol")
+
+=== GO Comparison: Rhizostol ===
+  Shared: 8791 
+  Stol only: 2071 
+  Flab only: 473 
+  Top shared:
+    - GO:0098858 
+    - GO:0030175 
+    - GO:0004879 
+    - GO:0098531 
+    - GO:0005902 
+    - GO:0030695 
+    - GO:0005096 
+    - GO:0050891 
+    - GO:0046578 
+    - GO:0030104 
+> cat("\n=== Sequence Conservation ===\n")
+
+=== Sequence Conservation ===
+> analyze_cons <- function(stol_genes, flab_genes, name) {
++   pairs <- ortholog_table %>%
++     filter(stol_transcript %in% stol_genes & flab_transcript %in% flab_genes)
++   cat("\n---", name, "---\n")
++   cat("  Pairs:", nrow(pairs), "\n")
++   if(nrow(pairs) > 0) {
++     cat("  Mean identity:", round(mean(pairs$pident, na.rm=TRUE), 1), "%\n")
++     cat("  Median identity:", round(median(pairs$pident, na.rm=TRUE), 1), "%\n")
++     pairs$category <- name
++   }
++   return(pairs)
++ }
+> avic_cons <- analyze_cons(avic_core, avic_core_flab, "Avicularium Core")
+
+--- Avicularium Core ---
+  Pairs: 103 
+  Mean identity: 83.9 %
+  Median identity: 84.5 %
+> rhiz_cons <- analyze_cons(rhiz_up, rhiz_up_flab, "Rhizostol Up")
+
+--- Rhizostol Up ---
+  Pairs: 459 
+  Mean identity: 84.1 %
+  Median identity: 84.4 %
+> shared_cons <- analyze_cons(shared_all, shared_all_flab, "Shared All")
+
+--- Shared All ---
+  Pairs: 303 
+  Mean identity: 86.9 %
+  Median identity: 86.9 %
+> all_cons <- bind_rows(avic_cons, rhiz_cons, shared_cons)
+> if(nrow(all_cons) > 0 && length(unique(all_cons$category)) > 1) {
++   kw <- kruskal.test(pident ~ category, data=all_cons)
++   cat("\nKruskal-Wallis p-value:", round(kw$p.value, 4), "\n")
++ }
+
+Kruskal-Wallis p-value: 0 
+> cat("\n=== Generating figures ===\n")
+
+=== Generating figures ===
+> # Conservation barplot
+> cons_df <- data.frame(
++   GeneSet = c("Avicularium Core", "Rhizostol Up", "Shared All",
++               paste("Unique", names(unique_genes_stol))),
++   Stol = c(length(avic_core), length(rhiz_up), length(shared_all),
++            sapply(unique_genes_stol, length)),
++   Flab = c(length(avic_core_flab), length(rhiz_up_flab), length(shared_all_flab),
++            sapply(names(unique_genes_stol), function(t) length(unique_genes_flab[[t]])))
++ )
+> cons_df$Pct <- 100 * cons_df$Flab / cons_df$Stol
+> cons_df$GeneSet <- reorder(cons_df$GeneSet, cons_df$Pct)
+> p1 <- ggplot(cons_df, aes(x=GeneSet, y=Pct)) +
++   geom_bar(stat="identity", fill="steelblue", width=0.7) +
++   geom_text(aes(label=paste0(Flab, "/", Stol)), hjust=-0.1, size=3.5) +
++   coord_flip(ylim=c(0, max(cons_df$Pct)*1.3)) +
++   labs(title="Gene Set Conservation Between Bugulina Species",
++        subtitle="B. flabellata orthologs as % of B. stolonifera gene sets",
++        y="% Conserved", x="") +
++   theme_minimal(base_size=13)
+> ggsave("Figure_CrossSpecies_Conservation.png", p1, width=10, height=6, dpi=300)
+> print(p1)
+<img width="1066" height="878" alt="image" src="https://github.com/user-attachments/assets/68b5fc68-43a3-4096-978c-51c93b0b1899" />
+
+> # Sequence identity plot
+> if(nrow(all_cons) > 0) {
++   p2 <- ggplot(all_cons, aes(x=category, y=pident, fill=category)) +
++     geom_violin(alpha=0.5, draw_quantiles=0.5) +
++     geom_boxplot(width=0.2, alpha=0.8) +
++     scale_fill_brewer(palette="Set2") +
++     labs(title="Sequence Conservation by Gene Category",
++          y="Nucleotide Identity (%)", x="") +
++     theme_minimal(base_size=13) + theme(legend.position="none")
++   ggsave("Figure_Sequence_Identity.png", p2, width=8, height=6, dpi=300)
++   print(p2)
++ }
+Warning message:
+The `draw_quantiles` argument of `geom_violin()` is deprecated as of ggplot2 4.0.0.
+ℹ Please use the `quantiles.linetype` argument instead.
+This warning is displayed once per session.
+Call lifecycle::last_lifecycle_warnings() to see where this warning was generated. 
+<img width="1066" height="878" alt="image" src="https://github.com/user-attachments/assets/5ea96de2-f63a-4b65-9b86-44260b5610d8" />
+
+> save(flab_annotations, ortholog_table, orthologs,
++      avic_core_flab, rhiz_up_flab, shared_all_flab, unique_genes_flab,
++      go_stol_avic, go_stol_rhiz, go_flab_avic, go_flab_rhiz,
++      go_comp_avic, go_comp_rhiz, all_cons,
++      file="cross_species_full_analysis.RData")
+> cat("\n========================================\n")
+
+========================================
+> cat("CROSS-SPECIES ANALYSIS COMPLETE\n")
+CROSS-SPECIES ANALYSIS COMPLETE
+> cat("========================================\n")
+========================================
+> cat("Orthologs:", nrow(orthologs), "\n")
+Orthologs: 15816 
+> cat("Avicularium conservation:", round(100*length(avic_core_flab)/length(avic_core), 1), "%\n")
+Avicularium conservation: 11.1 %
+> cat("Rhizostol conservation:", round(100*length(rhiz_up_flab)/length(rhiz_up), 1), "%\n")
+Rhizostol conservation: 23.2 %
+> cat("Shared all conservation:", round(100*length(shared_all_flab)/length(shared_all), 1), "%\n")
+Shared all conservation: 86.7 %
+> cat("\nOutputs:\n")
+
+Outputs:
+> cat("  ortholog_table_annotated.csv\n")
+  ortholog_table_annotated.csv
+> cat("  cross_species_full_analysis.RData\n")
+  cross_species_full_analysis.RData
+> cat("  Figure_CrossSpecies_Conservation.png\n")
+  Figure_CrossSpecies_Conservation.png
+> cat("  Figure_Sequence_Identity.png\n")
+  Figure_Sequence_Identity.png
